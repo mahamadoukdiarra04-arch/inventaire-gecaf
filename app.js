@@ -430,7 +430,7 @@
     const archives = getVisibleArchives();
     $("#adminArchivesList").innerHTML = archives.length
       ? archives.map(renderArchiveButton).join("")
-      : `<div class="archive-empty">Aucune archive disponible.</div>`;
+      : `<div class="archive-empty">Aucune fiche disponible.</div>`;
   }
 
   function archiveCurrentSheet() {
@@ -440,6 +440,7 @@
 
     const archive = {
       id: state.sheetId || makeId("sheet"),
+      status: "archived",
       archivedAt: new Date().toISOString(),
       session: { ...state.session },
       header: { ...state.header },
@@ -479,7 +480,7 @@
     const archive = getVisibleArchives().find((item) => item.id === id);
     if (!archive) return;
     const wasAdmin = isAdminSession();
-    archiveCurrentSheet();
+    if (!wasAdmin) archiveCurrentSheet();
     state.sheetId = archive.id;
     state.session = {
       ...state.session,
@@ -503,7 +504,7 @@
 
   function getTeamArchives() {
     const teamKey = normalizeTeam(state.session.team);
-    return state.archives.filter((archive) => normalizeTeam(archive.session?.team) === teamKey);
+    return state.archives.filter((archive) => normalizeTeam(archive.session?.team) === teamKey && (archive.status || "archived") === "archived");
   }
 
   function getVisibleArchives() {
@@ -515,10 +516,12 @@
     const title = [archive.session?.team, formatHeaderValue("date", archive.header.date), archive.header.agency, archive.session?.agent]
       .filter(Boolean)
       .join(" - ");
+    const isActiveSheet = archive.status === "active";
+    const dateLabel = isActiveSheet ? "fiche active - mise a jour le" : "archivee le";
     return `
       <button class="archive-item" type="button" data-archive-id="${archive.id}">
-        <strong>${escapeHtml(title || "Fiche archivee")}</strong>
-        <span>${filledRows} ligne(s) - archivee le ${escapeHtml(formatDateTime(archive.archivedAt))}</span>
+        <strong>${escapeHtml(title || (isActiveSheet ? "Fiche active" : "Fiche archivee"))}</strong>
+        <span>${filledRows} ligne(s) - ${dateLabel} ${escapeHtml(formatDateTime(archive.archivedAt))}</span>
       </button>
     `;
   }
@@ -1529,7 +1532,7 @@
     const [teamsResult, usersResult, sheetsResult] = await Promise.all([
       client.from("inventory_teams").select("*").order("team_name"),
       client.from("inventory_users").select("*").order("team_name").order("agent_name"),
-      client.from("inventory_sheets").select("*").eq("status", "archived").order("archived_at", { ascending: false }).limit(300),
+      client.from("inventory_sheets").select("*").order("updated_at", { ascending: false }).limit(500),
     ]);
     if (teamsResult.error) throw teamsResult.error;
     if (usersResult.error) throw usersResult.error;
@@ -1686,6 +1689,7 @@
     const snapshot = cellsToSnapshot(cells);
     return {
       id: sheet.id,
+      status: sheet.status || "archived",
       archivedAt: sheet.archived_at || sheet.updated_at,
       session: {
         connected: true,

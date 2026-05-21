@@ -1,4 +1,4 @@
-const CACHE_NAME = "gecaf-inv-v14";
+const CACHE_NAME = "gecaf-inv-v15";
 const PAGE_FALLBACK = "./";
 const ASSETS = [PAGE_FALLBACK, "./styles.css", "./app.js", "./supabase-config.js", "./manifest.webmanifest"];
 
