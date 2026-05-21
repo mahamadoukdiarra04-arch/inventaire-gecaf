@@ -1,8 +1,16 @@
-const CACHE_NAME = "gecaf-inv-v9";
-const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./supabase-config.js", "./manifest.webmanifest"];
+const CACHE_NAME = "gecaf-inv-v11";
+const PAGE_FALLBACK = "./";
+const ASSETS = [PAGE_FALLBACK, "./styles.css", "./app.js", "./supabase-config.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
+  event.waitUntil(
+    caches.open(CACHE_NAME).then(async (cache) => {
+      for (const asset of ASSETS) {
+        const response = await fetch(asset, { cache: "reload", redirect: "follow" });
+        if (isCacheable(response)) await cache.put(asset, response);
+      }
+    }),
+  );
   self.skipWaiting();
 });
 
@@ -17,15 +25,18 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
   if (event.request.mode === "navigate") {
-    event.respondWith(fetch(event.request).catch(() => caches.match("./index.html")));
+    event.respondWith(handleNavigation(event.request));
     return;
   }
+
   event.respondWith(
-    caches.match(event.request).then((cached) => {
+    caches.match(event.request, { ignoreSearch: true }).then((cached) => {
+      if (cached?.redirected) cached = null;
       const fetched = fetch(event.request)
         .then((response) => {
-          if (response && response.ok) {
+          if (isCacheable(response)) {
             const copy = response.clone();
             caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           }
@@ -36,3 +47,19 @@ self.addEventListener("fetch", (event) => {
     }),
   );
 });
+
+async function handleNavigation(request) {
+  try {
+    const response = await fetch(request, { redirect: "follow" });
+    if (isCacheable(response)) return response;
+  } catch {}
+
+  const cached = await caches.match(PAGE_FALLBACK, { ignoreSearch: true });
+  if (cached && !cached.redirected) return cached;
+
+  return fetch(PAGE_FALLBACK, { cache: "reload", redirect: "follow" });
+}
+
+function isCacheable(response) {
+  return Boolean(response && response.ok && !response.redirected && response.type !== "opaqueredirect");
+}
