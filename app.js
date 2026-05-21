@@ -61,6 +61,7 @@
   let supabaseClient = null;
   let sheetChannel = null;
   let syncTimer = null;
+  let syncInFlight = false;
   let applyingRemote = false;
 
   document.addEventListener("DOMContentLoaded", init);
@@ -1249,31 +1250,54 @@
       return;
     }
 
+    if (syncInFlight) {
+      state.syncStatus.remote = "syncing";
+      state.syncStatus.pending = state.syncQueue.length;
+      updateSyncBadge();
+      return;
+    }
+
+    syncInFlight = true;
     state.syncStatus.remote = "syncing";
     state.syncStatus.pending = state.syncQueue.length;
     updateSyncBadge();
 
-    const sent = [];
-    for (const action of [...state.syncQueue]) {
-      try {
-        await sendSyncAction(client, action);
-        sent.push(action.actionId);
-      } catch {
-        break;
+    const context = createSyncContext();
+    try {
+      for (const action of [...state.syncQueue]) {
+        try {
+          await sendSyncAction(client, action, context);
+          state.syncQueue = state.syncQueue.filter((item) => item.actionId !== action.actionId);
+          state.syncStatus.pending = state.syncQueue.length;
+          state.syncStatus.lastSyncAt = new Date().toISOString();
+          state.syncStatus.message = state.syncQueue.length ? "Synchronisation..." : "Synchronise";
+          saveState();
+        } catch (error) {
+          state.syncStatus.remote = "error";
+          state.syncStatus.message = "Sync en attente";
+          saveState();
+          console.warn("GECAF sync action failed", action?.type, error);
+          break;
+        }
       }
+    } finally {
+      syncInFlight = false;
     }
 
-    if (sent.length) {
-      state.syncQueue = state.syncQueue.filter((action) => !sent.includes(action.actionId));
-      state.syncStatus.lastSyncAt = new Date().toISOString();
-    }
     state.syncStatus.pending = state.syncQueue.length;
     state.syncStatus.remote = state.syncQueue.length ? "error" : "synced";
     state.syncStatus.message = state.syncQueue.length ? "Sync en attente" : "Synchronise";
     saveState();
   }
 
-  async function sendSyncAction(client, action) {
+  function createSyncContext() {
+    return {
+      activeSheetsByTeam: new Map(),
+      sheetIdMap: new Map(),
+    };
+  }
+
+  async function sendSyncAction(client, action, context = createSyncContext()) {
     if (action.type === "upsertTeam") {
       await throwOnError(
         client.from("inventory_teams").upsert(
@@ -1307,13 +1331,14 @@
     }
 
     if (action.type === "upsertSheet") {
-      await sendUpsertSheet(client, action.sheet);
+      await sendUpsertSheet(client, action.sheet, context);
       return;
     }
 
     if (action.type === "archiveSheet") {
+      const archiveSheetId = await resolveArchiveSheetId(client, action, context);
       await sendUpsertSheet(client, {
-        id: action.sheetId,
+        id: archiveSheetId,
         team_key: action.teamKey,
         team_name: action.teamName || state.session.team,
         status: "archived",
@@ -1331,13 +1356,13 @@
             updated_at: action.archivedAt,
             updated_by: action.updatedBy,
           })
-          .eq("id", action.sheetId),
+          .eq("id", archiveSheetId),
       );
       return;
     }
 
     if (action.type === "upsertCell") {
-      await sendUpsertSheet(client, {
+      const sheet = await sendUpsertSheet(client, {
         id: action.sheetId,
         team_key: action.teamKey,
         team_name: action.teamName || state.session.team,
@@ -1346,11 +1371,12 @@
         created_by: action.updatedBy,
         updated_by: action.updatedBy,
         updated_at: action.updatedAt,
-      });
+      }, context);
+      const sheetId = sheet?.id || getMappedSheetId(context, action.sheetId) || action.sheetId;
       await throwOnError(
         client.from("inventory_cells").upsert(
           {
-            sheet_id: action.sheetId,
+            sheet_id: sheetId,
             row_order: action.rowOrder,
             field_key: action.fieldKey,
             value: action.value,
@@ -1363,23 +1389,85 @@
     }
   }
 
-  async function sendUpsertSheet(client, sheet) {
-    if (!sheet?.id) return;
-    await throwOnError(
-      client.from("inventory_sheets").upsert(
-        {
-          id: sheet.id,
-          team_key: sheet.team_key,
-          team_name: sheet.team_name,
-          status: sheet.status,
-          archived_at: sheet.archived_at || null,
-          created_by: sheet.created_by,
-          updated_by: sheet.updated_by,
-          updated_at: sheet.updated_at,
-        },
-        { onConflict: "id" },
-      ),
-    );
+  async function sendUpsertSheet(client, sheet, context = createSyncContext()) {
+    if (!sheet?.id) return null;
+    const sheetPayload = {
+      id: getMappedSheetId(context, sheet.id) || sheet.id,
+      team_key: sheet.team_key,
+      team_name: sheet.team_name,
+      status: sheet.status,
+      archived_at: sheet.archived_at || null,
+      created_by: sheet.created_by,
+      updated_by: sheet.updated_by,
+      updated_at: sheet.updated_at,
+    };
+
+    if (sheetPayload.status === "active") {
+      const activeSheet = await findRemoteActiveSheet(client, sheetPayload.team_key, context);
+      if (activeSheet && activeSheet.id !== sheetPayload.id) {
+        rememberSheetMapping(context, sheet.id, activeSheet.id);
+        return activeSheet;
+      }
+    }
+
+    const result = await client.from("inventory_sheets").upsert(sheetPayload, { onConflict: "id" });
+    if (result.error) {
+      const activeSheet = sheetPayload.status === "active" ? await findRemoteActiveSheet(client, sheetPayload.team_key, context, true) : null;
+      if (activeSheet) {
+        rememberSheetMapping(context, sheet.id, activeSheet.id);
+        return activeSheet;
+      }
+      throw result.error;
+    }
+
+    if (sheetPayload.status === "active") {
+      context.activeSheetsByTeam.set(sheetPayload.team_key, { ...sheetPayload });
+    }
+    return sheetPayload;
+  }
+
+  async function resolveArchiveSheetId(client, action, context) {
+    const sheetId = getMappedSheetId(context, action.sheetId) || action.sheetId;
+    const { data, error } = await client.from("inventory_sheets").select("id").eq("id", sheetId).limit(1);
+    if (error) throw error;
+    if (data?.[0]?.id) return data[0].id;
+
+    const activeSheet = await findRemoteActiveSheet(client, action.teamKey, context, true);
+    if (activeSheet?.id) {
+      rememberSheetMapping(context, action.sheetId, activeSheet.id);
+      return activeSheet.id;
+    }
+    return sheetId;
+  }
+
+  async function findRemoteActiveSheet(client, teamKey, context, refresh = false) {
+    if (!teamKey) return null;
+    if (!refresh && context.activeSheetsByTeam.has(teamKey)) return context.activeSheetsByTeam.get(teamKey);
+    const { data, error } = await client
+      .from("inventory_sheets")
+      .select("id,team_key,team_name,status,archived_at,created_by,updated_by,updated_at")
+      .eq("team_key", teamKey)
+      .eq("status", "active")
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    if (error) throw error;
+    const sheet = data?.[0] || null;
+    if (sheet) context.activeSheetsByTeam.set(teamKey, sheet);
+    return sheet;
+  }
+
+  function rememberSheetMapping(context, fromSheetId, toSheetId) {
+    if (!fromSheetId || !toSheetId || fromSheetId === toSheetId) return;
+    context.sheetIdMap.set(fromSheetId, toSheetId);
+    if (state.sheetId === fromSheetId) state.sheetId = toSheetId;
+    state.syncQueue.forEach((item) => {
+      if (item.sheetId === fromSheetId) item.sheetId = toSheetId;
+      if (item.sheet?.id === fromSheetId) item.sheet.id = toSheetId;
+    });
+  }
+
+  function getMappedSheetId(context, sheetId) {
+    return context.sheetIdMap.get(sheetId) || sheetId;
   }
 
   async function throwOnError(request) {
