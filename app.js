@@ -117,7 +117,9 @@
       const fallback = defaultState();
       const session = { ...fallback.session, ...(parsed.session || {}) };
       session.teamKey = session.teamKey || normalizeTeam(session.team);
-      session.isAdmin = Boolean(session.isAdmin || isAdminCredentials(session.team, session.agent));
+      session.connected = false;
+      session.isAdmin = false;
+      session.connectedAt = "";
       return {
         ...fallback,
         ...parsed,
@@ -139,55 +141,86 @@
   function saveState() {
     state.syncStatus.pending = state.syncQueue.length;
     state.syncStatus.online = navigator.onLine;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(getPersistableState()));
     mirrorStateToOfflineDb();
     updateSyncBadge();
+  }
+
+  function getPersistableState() {
+    return {
+      ...state,
+      session: {
+        ...state.session,
+        connected: false,
+        isAdmin: false,
+        connectedAt: "",
+      },
+    };
   }
 
   function bindLogin() {
     $("#loginForm").addEventListener("submit", async (event) => {
       event.preventDefault();
+      const submitButton = event.currentTarget.querySelector('button[type="submit"]');
       const data = Object.fromEntries(new FormData(event.currentTarget));
-      const nextTeam = clean(data.team) || "Equipe terrain";
+      const nextTeam = clean(data.team);
       const nextAgent = clean(data.agent);
       const isAdmin = isAdminCredentials(nextTeam, nextAgent);
 
-      if (!isAdmin && !isAllowedUser(nextTeam, nextAgent)) {
-        alert("Cet agent n'est pas encore actif dans cette equipe. Connectez-vous en admin pour l'ajouter.");
+      if (!nextTeam || !nextAgent) {
+        alert("Renseignez l'equipe et l'agent.");
         return;
       }
 
-      const teamChanged = normalizeTeam(state.session.team) && normalizeTeam(state.session.team) !== normalizeTeam(nextTeam);
-      if (teamChanged) {
-        archiveCurrentSheet();
-        state.sheetId = makeId("sheet");
-        state.header = { date: new Date().toISOString().slice(0, 10), agency: "", supervisor: "", locked: false };
-        state.rows = [];
-        active = { type: "row", order: 1, colIndex: 1 };
+      if (submitButton) {
+        submitButton.disabled = true;
+        submitButton.textContent = "Verification...";
       }
 
-      state.session = {
-        connected: true,
-        team: nextTeam,
-        teamKey: normalizeTeam(nextTeam),
-        agent: nextAgent,
-        isAdmin,
-        connectedAt: new Date().toISOString(),
-      };
-      if (!isAdmin) ensureLocalTeamAndUser(nextTeam, nextAgent);
-      saveState();
-      render();
-      if (isAdmin) {
-        await refreshAdminData();
-        openAdminPanel();
-      } else {
-        await startTeamSession();
+      try {
+        if (!isAdmin && !(await validateUserAccess(nextTeam, nextAgent))) {
+          alert("Cet agent n'est pas encore actif dans cette equipe. Connectez-vous en admin pour l'ajouter.");
+          return;
+        }
+
+        const teamChanged = normalizeTeam(state.session.team) && normalizeTeam(state.session.team) !== normalizeTeam(nextTeam);
+        if (teamChanged) {
+          archiveCurrentSheet();
+          state.sheetId = makeId("sheet");
+          state.header = { date: new Date().toISOString().slice(0, 10), agency: "", supervisor: "", locked: false };
+          state.rows = [];
+          active = { type: "row", order: 1, colIndex: 1 };
+        }
+
+        state.session = {
+          connected: true,
+          team: nextTeam,
+          teamKey: normalizeTeam(nextTeam),
+          agent: nextAgent,
+          isAdmin,
+          connectedAt: new Date().toISOString(),
+        };
+        saveState();
+        render();
+        if (isAdmin) {
+          await refreshAdminData();
+          openAdminPanel();
+        } else {
+          await startTeamSession();
+        }
+      } finally {
+        if (submitButton) {
+          submitButton.disabled = false;
+          submitButton.textContent = "Ouvrir la fiche";
+        }
       }
     });
 
     $("#backToLogin").addEventListener("click", () => {
       stopRealtime();
       state.session.connected = false;
+      state.session.isAdmin = false;
+      state.session.connectedAt = "";
       saveState();
       render();
     });
@@ -496,8 +529,7 @@
     updateSyncBadge();
 
     if (!state.session.connected) {
-      $("#loginForm").elements.team.value = state.session.team || "";
-      $("#loginForm").elements.agent.value = state.session.agent || "";
+      $("#loginForm").reset();
       return;
     }
 
@@ -1141,9 +1173,7 @@
     saveState();
 
     try {
-      ensureLocalTeamAndUser(state.session.team, state.session.agent);
       await syncNow();
-      await ensureRemoteTeamAndUser();
       await loadRemoteActiveSheet();
       await pullRemoteArchivesForTeam(state.session.teamKey);
       startRealtime();
@@ -1619,14 +1649,41 @@
   }
 
   function isAdminSession() {
-    return Boolean(state.session?.isAdmin || isAdminCredentials(state.session?.team, state.session?.agent));
+    return Boolean(state.session?.connected && (state.session?.isAdmin || isAdminCredentials(state.session?.team, state.session?.agent)));
   }
 
   function isAllowedUser(teamName, agentName) {
-    if (!state.users.length) return true;
     const teamKey = normalizeTeam(teamName);
     const agentKey = normalizeTeam(agentName);
+    if (!teamKey || !agentKey || !state.users.length) return false;
+    const team = state.teams.find((item) => item.teamKey === teamKey);
+    if (team && team.active === false) return false;
     return state.users.some((user) => user.active !== false && user.teamKey === teamKey && user.agentKey === agentKey);
+  }
+
+  async function validateUserAccess(teamName, agentName) {
+    if (isAllowedUser(teamName, agentName)) return true;
+    const client = getSupabaseClient();
+    if (!client || !navigator.onLine) return false;
+
+    const teamKey = normalizeTeam(teamName);
+    const agentKey = normalizeTeam(agentName);
+    try {
+      const { data, error } = await client
+        .from("inventory_users")
+        .select("team_key,team_name,agent_key,agent_name,active")
+        .eq("team_key", teamKey)
+        .eq("agent_key", agentKey)
+        .eq("active", true)
+        .limit(1);
+      if (error) throw error;
+      const user = data?.[0];
+      if (!user) return false;
+      upsertLocalUser(user.team_name || teamName, user.agent_name || agentName);
+      return true;
+    } catch {
+      return isAllowedUser(teamName, agentName);
+    }
   }
 
   function upsertLocalTeam(teamName) {
@@ -1703,9 +1760,16 @@
       const localUpdated = Number(localStorage.getItem(STORAGE_KEY + ":savedAt") || 0);
       const indexedUpdated = Number(stored.savedAt || 0);
       if (indexedUpdated > localUpdated) {
+        const fallback = defaultState();
+        const storedSession = { ...fallback.session, ...(stored.value?.session || {}) };
+        storedSession.teamKey = storedSession.teamKey || normalizeTeam(storedSession.team);
+        storedSession.connected = false;
+        storedSession.isAdmin = false;
+        storedSession.connectedAt = "";
         state = {
-          ...defaultState(),
+          ...fallback,
           ...stored.value,
+          session: storedSession,
           teams: normalizeTeams(stored.value?.teams),
           users: normalizeUsers(stored.value?.users),
         };
@@ -1719,7 +1783,7 @@
     try {
       const savedAt = Date.now();
       localStorage.setItem(STORAGE_KEY + ":savedAt", String(savedAt));
-      await idbSet("state", { key: "state", savedAt, value: state });
+      await idbSet("state", { key: "state", savedAt, value: getPersistableState() });
     } catch {}
   }
 

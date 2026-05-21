@@ -550,6 +550,7 @@ button.sheet-cell {
   min-height: 100vh;
   background: #fff;
   font-family: "Gill Sans MT", "Gill Sans", Calibri, Arial, sans-serif;
+  zoom: var(--sheet-zoom, 1);
 }
 
 .excel-row {
@@ -852,6 +853,10 @@ button.excel-cell {
 }
 
 @media (max-width: 780px) {
+  :root {
+    --sheet-zoom: 0.56;
+  }
+
   .floating-tools {
     left: 0.45rem;
     bottom: 0.45rem;
@@ -876,35 +881,84 @@ button.excel-cell {
     grid-template-columns: 1fr;
   }
 
-  .excel-row {
-    grid-template-columns:
-      99px 233px 173px 212px 281px 192px 110px 198px 158px 109px 162px
-      309px;
+  .admin-panel {
+    padding: calc(0.55rem + env(safe-area-inset-top)) 0.55rem calc(0.75rem + env(safe-area-inset-bottom));
+    font-size: 0.9rem;
+  }
+
+  .admin-panel .editor-heading {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    align-items: center;
+    margin: -0.55rem -0.55rem 0.65rem;
+    padding: calc(0.55rem + env(safe-area-inset-top)) 0.55rem 0.55rem;
+    background: #fff;
+    box-shadow: 0 1px 0 var(--line);
+  }
+
+  .admin-panel .editor-heading h2 {
+    font-size: 1.05rem;
+    line-height: 1.05;
+  }
+
+  .admin-card,
+  .admin-lists section {
+    gap: 0.48rem;
+    padding: 0.62rem;
+  }
+
+  .admin-card h3,
+  .admin-lists h3 {
+    font-size: 0.92rem;
+  }
+
+  .admin input {
+    min-height: 38px;
+    padding: 0.52rem 0.62rem;
+  }
+
+  .admin .primary-button {
+    min-height: 38px;
+    padding: 0.52rem 0.72rem;
+  }
+
+  .admin-list-item {
+    padding: 0.52rem;
+  }
+
+  .admin-list-item span {
+    font-size: 0.76rem;
+  }
+
+  .sheet-wrap {
+    height: 100dvh;
+    padding-bottom: 5.4rem;
   }
 
   .row-1 .excel-cell,
   .title-cell {
-    font-size: 18px;
+    font-size: 21.33px;
   }
 
   .instruction-cell {
-    height: 44px;
-    font-size: 18px;
+    height: 22px;
+    font-size: 21.33px;
   }
 
   .meta-label,
   .meta-value {
-    font-size: 18px;
+    font-size: 21.33px;
   }
 
   .row-8 .excel-cell,
   .column-head {
-    font-size: 18px;
+    font-size: 21.33px;
   }
 
   .data-row .excel-cell,
   .data-cell {
-    font-size: 20px;
+    font-size: 24px;
   }
 
   .sheet-view {

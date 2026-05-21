@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#24577f" />
     <title>Fiche d'inventaire GECAF</title>
     <link rel="icon" href="data:," />
-    <link rel="manifest" href="manifest.webmanifest?v=5" />
-    <link rel="stylesheet" href="styles.css?v=5" />
+    <link rel="manifest" href="manifest.webmanifest?v=6" />
+    <link rel="stylesheet" href="styles.css?v=6" />
   </head>
   <body>
     <main class="app">
@@ -17,14 +17,14 @@
           <h1>Connexion equipe</h1>
           <p class="muted">Renseignez l'equipe terrain pour ouvrir la fiche d'inventaire.</p>
 
-          <form id="loginForm" class="form-stack">
+          <form id="loginForm" class="form-stack" autocomplete="off">
             <label>
               Equipe
-              <input name="team" autocomplete="organization" placeholder="Equipe 1" />
+              <input name="team" autocomplete="off" placeholder="Equipe 1" required />
             </label>
             <label>
               Agent
-              <input name="agent" autocomplete="name" placeholder="Nom de l'agent" />
+              <input name="agent" autocomplete="off" placeholder="Nom de l'agent" required />
             </label>
             <button class="primary-button" type="submit">Ouvrir la fiche</button>
           </form>
@@ -140,7 +140,7 @@
     </template>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=5"></script>
-    <script src="app.js?v=5"></script>
+    <script src="supabase-config.js?v=6"></script>
+    <script src="app.js?v=6"></script>
   </body>
 </html>
