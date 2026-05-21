@@ -3,6 +3,8 @@ node_modules/
 .wrangler/
 .env
 .dev.vars
+.supabase-db-password.local
+supabase/.temp/
 *.log
 *.png
 *.pdf
