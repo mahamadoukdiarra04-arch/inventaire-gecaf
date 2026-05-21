@@ -27,6 +27,12 @@ body {
   min-height: 100%;
 }
 
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  touch-action: manipulation;
+}
+
 body {
   margin: 0;
   color: var(--ink);
@@ -42,6 +48,7 @@ textarea {
 
 button {
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 input,
@@ -52,8 +59,10 @@ textarea {
   border-radius: 7px;
   padding: 0.82rem 0.88rem;
   color: var(--ink);
+  font-size: 16px;
   background: #fff;
   outline: none;
+  touch-action: manipulation;
 }
 
 input:focus,
@@ -541,6 +550,7 @@ button.sheet-cell {
   width: 100vw;
   height: 100vh;
   overflow: auto;
+  overscroll-behavior: contain;
   background: #fff;
 }
 
@@ -576,6 +586,7 @@ button.sheet-cell {
 button.excel-cell {
   width: 100%;
   cursor: pointer;
+  touch-action: manipulation;
 }
 
 .merged {
@@ -916,6 +927,7 @@ button.excel-cell {
   .admin input {
     min-height: 38px;
     padding: 0.52rem 0.62rem;
+    font-size: 16px;
   }
 
   .admin .primary-button {
