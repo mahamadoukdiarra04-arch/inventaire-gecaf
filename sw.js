@@ -1,4 +1,4 @@
-const CACHE_NAME = "gecaf-inv-v12";
+const CACHE_NAME = "gecaf-inv-v14";
 const PAGE_FALLBACK = "./";
 const ASSETS = [PAGE_FALLBACK, "./styles.css", "./app.js", "./supabase-config.js", "./manifest.webmanifest"];
 
@@ -25,6 +25,8 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.pathname.endsWith("/rescue") || requestUrl.pathname.endsWith("/rescue.html")) return;
 
   if (event.request.mode === "navigate") {
     event.respondWith(handleNavigation(event.request));

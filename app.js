@@ -1983,7 +1983,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=12").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=14").catch(() => {});
     }
   }
 })();
