@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#24577f" />
+    <title>Fiche d'inventaire GECAF</title>
+    <link rel="icon" href="data:," />
+    <link rel="manifest" href="manifest.webmanifest?v=5" />
+    <link rel="stylesheet" href="styles.css?v=5" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="login-view" id="loginView">
+        <div class="login-card">
+          <p class="eyebrow">GECAF INV</p>
+          <h1>Connexion equipe</h1>
+          <p class="muted">Renseignez l'equipe terrain pour ouvrir la fiche d'inventaire.</p>
+
+          <form id="loginForm" class="form-stack">
+            <label>
+              Equipe
+              <input name="team" autocomplete="organization" placeholder="Equipe 1" />
+            </label>
+            <label>
+              Agent
+              <input name="agent" autocomplete="name" placeholder="Nom de l'agent" />
+            </label>
+            <button class="primary-button" type="submit">Ouvrir la fiche</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="sheet-view" id="sheetView" aria-label="Fiche d'inventaire">
+        <section class="sheet-wrap" aria-label="Grille de saisie identique a la fiche Excel">
+          <div class="excel-sheet" id="sheetGrid"></div>
+        </section>
+
+        <div class="floating-tools" aria-label="Actions hors fiche">
+          <button class="tool-button" type="button" id="backToLogin">Equipe</button>
+          <button class="tool-button admin-tool" type="button" id="adminButton">Admin</button>
+          <button class="tool-button" type="button" id="newSheetButton">Nouvelle fiche</button>
+          <button class="tool-button" type="button" id="archivesButton">Archives</button>
+          <button class="tool-button" type="button" id="exportPdfButton">PDF</button>
+          <button class="tool-button" type="button" id="exportExcelButton">Excel</button>
+          <span class="sync-badge" id="syncBadge">Local</span>
+        </div>
+        <button class="fab" type="button" id="addRowButton" aria-label="Nouvel enregistrement">+</button>
+      </section>
+    </main>
+
+    <div class="editor" id="cellEditor" aria-hidden="true">
+      <div class="editor-backdrop" data-close-editor></div>
+      <section class="editor-panel" role="dialog" aria-modal="true" aria-labelledby="editorTitle">
+        <div class="editor-handle"></div>
+        <div class="editor-heading">
+          <div>
+            <p class="eyebrow" id="editorPosition">Ligne 1</p>
+            <h2 id="editorTitle">Champ</h2>
+          </div>
+          <button class="icon-button dark" type="button" data-close-editor aria-label="Fermer">X</button>
+        </div>
+        <div id="editorControl" class="editor-control"></div>
+        <div class="editor-actions">
+          <button class="ghost-button" type="button" id="previousCell">Precedent</button>
+          <button class="primary-button" type="button" id="nextCell">Suivant</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="archives" id="archivesPanel" aria-hidden="true">
+      <div class="editor-backdrop" data-close-archives></div>
+      <section class="archives-panel" role="dialog" aria-modal="true" aria-labelledby="archivesTitle">
+        <div class="editor-handle"></div>
+        <div class="editor-heading">
+          <div>
+            <p class="eyebrow">Fiches</p>
+            <h2 id="archivesTitle">Archives</h2>
+          </div>
+          <button class="icon-button dark" type="button" data-close-archives aria-label="Fermer">X</button>
+        </div>
+        <div id="archivesList" class="archives-list"></div>
+      </section>
+    </div>
+
+    <div class="admin" id="adminPanel" aria-hidden="true">
+      <div class="editor-backdrop" data-close-admin></div>
+      <section class="admin-panel" role="dialog" aria-modal="true" aria-labelledby="adminTitle">
+        <div class="editor-heading">
+          <div>
+            <p class="eyebrow">Administration</p>
+            <h2 id="adminTitle">Equipes et utilisateurs</h2>
+          </div>
+          <button class="icon-button dark" type="button" data-close-admin aria-label="Fermer">X</button>
+        </div>
+
+        <div class="admin-grid">
+          <form id="teamForm" class="admin-card">
+            <h3>Equipe</h3>
+            <label>
+              Nom de l'equipe
+              <input name="teamName" placeholder="Equipe 1" required />
+            </label>
+            <button class="primary-button compact" type="submit">Enregistrer</button>
+          </form>
+
+          <form id="userForm" class="admin-card">
+            <h3>Utilisateur</h3>
+            <label>
+              Equipe
+              <input name="teamName" placeholder="Equipe 1" required />
+            </label>
+            <label>
+              Agent
+              <input name="agentName" placeholder="Nom de l'agent" required />
+            </label>
+            <button class="primary-button compact" type="submit">Enregistrer</button>
+          </form>
+        </div>
+
+        <div class="admin-lists">
+          <section>
+            <h3>Equipes</h3>
+            <div id="adminTeamsList" class="admin-list"></div>
+          </section>
+          <section>
+            <h3>Utilisateurs</h3>
+            <div id="adminUsersList" class="admin-list"></div>
+          </section>
+          <section>
+            <h3>Archives</h3>
+            <div id="adminArchivesList" class="admin-list"></div>
+          </section>
+        </div>
+      </section>
+    </div>
+
+    <template id="emptyCellTemplate">
+      <span class="cell-empty">Toucher pour renseigner</span>
+    </template>
+
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="supabase-config.js?v=5"></script>
+    <script src="app.js?v=5"></script>
+  </body>
+</html>

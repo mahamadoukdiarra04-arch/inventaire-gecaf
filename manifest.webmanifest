@@ -1,0 +1,9 @@
+{
+  "name": "Fiche d'inventaire GECAF",
+  "short_name": "Fiche GECAF",
+  "description": "Fiche terrain mobile pour l'inventaire des immobilisations.",
+  "start_url": "index.html?v=5",
+  "display": "standalone",
+  "background_color": "#f7f8f5",
+  "theme_color": "#16322f"
+}

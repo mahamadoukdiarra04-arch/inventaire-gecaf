@@ -1,0 +1,10 @@
+{
+  "name": "gecaf-inventaire",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Application web mobile pour fiche d'inventaire GECAF.",
+  "scripts": {
+    "build": "node scripts/build-static.mjs",
+    "deploy": "npm run build && npx wrangler pages deploy dist --project-name gecaf-inv"
+  }
+}

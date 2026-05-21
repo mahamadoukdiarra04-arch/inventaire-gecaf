@@ -1,0 +1,12 @@
+dist/
+node_modules/
+.wrangler/
+.env
+.dev.vars
+*.log
+*.png
+*.pdf
+*.xlsx
+!package.json
+!package-lock.json
+!supabase/schema.sql
