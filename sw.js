@@ -1,4 +1,4 @@
-const CACHE_NAME = "gecaf-inv-v7";
+const CACHE_NAME = "gecaf-inv-v8";
 const ASSETS = ["./", "./index.html", "./styles.css", "./app.js", "./supabase-config.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

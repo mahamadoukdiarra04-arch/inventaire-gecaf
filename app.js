@@ -585,12 +585,13 @@
 
   function renderDataRow(order) {
     const row = findRow(order);
-    const emptyClass = !row || columns.slice(1).every((column) => !clean(row[column.key])) ? "is-empty" : "";
+    const hasContent = rowHasContent(row);
+    const emptyClass = hasContent ? "" : "is-empty";
     return `
       <div class="excel-row data-row ${emptyClass}" data-rendered-row="${order}">
         ${columns
           .map((column, colIndex) => {
-            const value = column.key === "order" ? (row ? String(order) : "") : clean(row?.[column.key]);
+            const value = column.key === "order" ? (hasContent ? String(order) : "") : clean(row?.[column.key]);
             const activeClass = active.type === "row" && active.order === order && active.colIndex === colIndex ? "is-active" : "";
             return `
               <button
@@ -770,9 +771,13 @@
   function getNextEmptyRow() {
     for (let order = 1; order <= DATA_ROWS; order += 1) {
       const row = findRow(order);
-      if (!row || columns.slice(1).every((column) => !clean(row[column.key]))) return ensureRow(order);
+      if (!row || !rowHasContent(row)) return ensureRow(order);
     }
     return ensureRow(DATA_ROWS);
+  }
+
+  function rowHasContent(row) {
+    return Boolean(row && columns.slice(1).some((column) => clean(row[column.key])));
   }
 
   function scrollRowIntoView(order) {
@@ -893,7 +898,8 @@
 
     for (let order = 1; order <= DATA_ROWS; order += 1) {
       const row = findRow(order);
-      const values = columns.map((column) => (column.key === "order" ? (row ? String(order) : "") : clean(row?.[column.key])));
+      const hasContent = rowHasContent(row);
+      const values = columns.map((column) => (column.key === "order" ? (hasContent ? String(order) : "") : clean(row?.[column.key])));
       rows.push(
         xlsxRow(
           order + 8,

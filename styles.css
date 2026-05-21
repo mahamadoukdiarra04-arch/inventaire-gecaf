@@ -560,7 +560,6 @@ button.sheet-cell {
   min-height: 100vh;
   background: #fff;
   font-family: "Gill Sans MT", "Gill Sans", Calibri, Arial, sans-serif;
-  zoom: var(--sheet-zoom, 1);
 }
 
 .excel-row {
@@ -864,10 +863,6 @@ button.excel-cell {
 }
 
 @media (max-width: 780px) {
-  :root {
-    --sheet-zoom: 0.56;
-  }
-
   .floating-tools {
     left: 0.45rem;
     bottom: 0.45rem;
