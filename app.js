@@ -9,6 +9,8 @@
   const ADMIN_AGENT = "admin1";
   const DATA_ROWS = 200;
   const REMOTE_CONFIG = window.GECAF_CONFIG || {};
+  const REMOTE_PAGE_SIZE = 1000;
+  const REMOTE_SHEET_BATCH_SIZE = 40;
 
   const columns = [
     { key: "order", label: "N° ordre", type: "readonly" },
@@ -1554,9 +1556,7 @@
   async function mergeRemoteArchives(client, sheets) {
     if (!sheets.length) return;
     const sheetIds = sheets.map((sheet) => sheet.id);
-    const { data, error } = await client.from("inventory_cells").select("*").in("sheet_id", sheetIds);
-    if (error) throw error;
-    const cellsBySheet = groupBy(data || [], "sheet_id");
+    const cellsBySheet = groupBy(await fetchCellsForSheetIds(client, sheetIds), "sheet_id");
     const remoteArchives = sheets.map((sheet) => sheetToArchive(sheet, cellsBySheet[sheet.id] || []));
     const existing = new Map(state.archives.map((archive) => [archive.id, archive]));
     remoteArchives.forEach((archive) => existing.set(archive.id, archive));
@@ -1564,9 +1564,49 @@
   }
 
   async function fetchSheetCells(client, sheetId) {
-    const { data, error } = await client.from("inventory_cells").select("*").eq("sheet_id", sheetId);
-    if (error) throw error;
-    return data || [];
+    return fetchCellsForSheetIds(client, [sheetId]);
+  }
+
+  async function fetchCellsForSheetIds(client, sheetIds) {
+    const ids = Array.from(new Set(sheetIds.filter(Boolean)));
+    const cells = [];
+
+    for (let index = 0; index < ids.length; index += REMOTE_SHEET_BATCH_SIZE) {
+      const batch = ids.slice(index, index + REMOTE_SHEET_BATCH_SIZE);
+      let from = 0;
+
+      while (true) {
+        const page = await fetchRemoteCellsBatchPage(batch, from);
+        cells.push(...page);
+        if (page.length < REMOTE_PAGE_SIZE) break;
+        from += REMOTE_PAGE_SIZE;
+      }
+    }
+
+    return cells;
+  }
+
+  async function fetchRemoteCellsBatchPage(sheetIds, from) {
+    const params = new URLSearchParams({
+      select: "*",
+      sheet_id: `in.(${sheetIds.join(",")})`,
+      order: "sheet_id.asc,row_order.asc,field_key.asc",
+    });
+    const endpoint = `${REMOTE_CONFIG.supabaseUrl.replace(/\/$/, "")}/rest/v1/inventory_cells?${params.toString()}`;
+    const response = await fetch(endpoint, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+        apikey: REMOTE_CONFIG.supabaseAnonKey,
+        Authorization: `Bearer ${REMOTE_CONFIG.supabaseAnonKey}`,
+        "Range-Unit": "items",
+        Range: `${from}-${from + REMOTE_PAGE_SIZE - 1}`,
+      },
+    });
+    if (!response.ok) throw new Error(`Lecture des cellules impossible (${response.status})`);
+    return response.json();
   }
 
   function applyRemoteSheet(sheet, cells) {
