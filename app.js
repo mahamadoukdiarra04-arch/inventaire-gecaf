@@ -1447,6 +1447,9 @@
     createSyncTimer();
     if (hasRemoteConfig() && navigator.onLine) {
       try {
+        state.syncStatus.remote = "syncing";
+        state.syncStatus.message = "Chargement admin...";
+        saveState();
         await syncNow({ force: true });
         await pullRemoteAdminData();
       } catch {
@@ -1942,32 +1945,29 @@
   async function pullRemoteArchivesForTeam(teamKey) {
     const client = getSupabaseClient();
     if (!client || !teamKey) return;
-    const { data, error } = await client
-      .from("inventory_sheets")
-      .select("*")
-      .eq("team_key", teamKey)
-      .eq("status", "archived")
-      .order("archived_at", { ascending: false })
-      .limit(100);
-    if (error) throw error;
-    await mergeRemoteArchives(client, data || []);
+    const sheets = await fetchAllRemoteRows(() =>
+      client
+        .from("inventory_sheets")
+        .select("*")
+        .eq("team_key", teamKey)
+        .eq("status", "archived")
+        .order("archived_at", { ascending: false }),
+    );
+    await mergeRemoteArchives(client, sheets);
   }
 
   async function pullRemoteAdminData() {
     const client = getSupabaseClient();
     if (!client) return;
-    const [teamsResult, usersResult, sheetsResult] = await Promise.all([
-      client.from("inventory_teams").select("*").order("team_name"),
-      client.from("inventory_users").select("*").order("team_name").order("agent_name"),
-      client.from("inventory_sheets").select("*").order("updated_at", { ascending: false }).limit(500),
+    const [teams, users, sheets] = await Promise.all([
+      fetchAllRemoteRows(() => client.from("inventory_teams").select("*").order("team_name")),
+      fetchAllRemoteRows(() => client.from("inventory_users").select("*").order("team_name").order("agent_name")),
+      fetchAllRemoteRows(() => client.from("inventory_sheets").select("*").order("updated_at", { ascending: false })),
     ]);
-    if (teamsResult.error) throw teamsResult.error;
-    if (usersResult.error) throw usersResult.error;
-    if (sheetsResult.error) throw sheetsResult.error;
 
-    state.teams = normalizeTeams((teamsResult.data || []).map((team) => ({ teamName: team.team_name, teamKey: team.team_key, active: team.active })));
+    state.teams = normalizeTeams((teams || []).map((team) => ({ teamName: team.team_name, teamKey: team.team_key, active: team.active })));
     state.users = normalizeUsers(
-      (usersResult.data || []).map((user) => ({
+      (users || []).map((user) => ({
         teamName: user.team_name,
         teamKey: user.team_key,
         agentName: user.agent_name,
@@ -1975,7 +1975,27 @@
         active: user.active,
       })),
     );
-    await mergeRemoteArchives(client, sheetsResult.data || []);
+    await mergeRemoteArchives(client, sheets || []);
+    state.syncStatus.remote = "synced";
+    state.syncStatus.message = `${sheets.length} fiche(s) chargee(s)`;
+    state.syncStatus.lastSyncAt = new Date().toISOString();
+    saveState();
+  }
+
+  async function fetchAllRemoteRows(makeQuery, pageSize = REMOTE_PAGE_SIZE) {
+    const rows = [];
+    let from = 0;
+
+    while (true) {
+      const { data, error } = await makeQuery().range(from, from + pageSize - 1);
+      if (error) throw error;
+      const page = data || [];
+      rows.push(...page);
+      if (page.length < pageSize) break;
+      from += pageSize;
+    }
+
+    return rows;
   }
 
   async function mergeRemoteArchives(client, sheets) {
@@ -2573,7 +2593,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=20").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=21").catch(() => {});
     }
   }
 })();
