@@ -11,6 +11,12 @@
   const REMOTE_CONFIG = window.GECAF_CONFIG || {};
   const REMOTE_PAGE_SIZE = 1000;
   const REMOTE_SHEET_BATCH_SIZE = 40;
+  const SHEET_ZOOM_KEY = STORAGE_KEY + ":sheetZoom";
+  const MIN_SHEET_SCALE = 0.16;
+  const MAX_SHEET_SCALE = 1.15;
+  const ZOOM_STEP = 0.12;
+  const TAP_MOVE_THRESHOLD = 12;
+  const TAP_TIME_LIMIT = 700;
 
   const columns = [
     { key: "order", label: "N° ordre", type: "readonly" },
@@ -65,6 +71,9 @@
   let syncTimer = null;
   let syncInFlight = false;
   let applyingRemote = false;
+  let sheetScale = loadSheetScale();
+  let sheetTap = null;
+  let pendingCellEdit = false;
 
   document.addEventListener("DOMContentLoaded", init);
 
@@ -221,6 +230,7 @@
 
     $("#backToLogin").addEventListener("click", () => {
       stopRealtime();
+      pendingCellEdit = false;
       state.session.connected = false;
       state.session.isAdmin = false;
       state.session.connectedAt = "";
@@ -233,6 +243,7 @@
     $("#addRowButton").addEventListener("click", () => {
       const row = getNextEmptyRow();
       active = { type: "row", order: row.order, colIndex: 1 };
+      pendingCellEdit = false;
       saveState();
       renderSheet();
       scrollRowIntoView(row.order);
@@ -244,6 +255,7 @@
       archiveCurrentSheet();
       createBlankCurrentSheet();
       active = { type: "header", key: "date" };
+      pendingCellEdit = false;
       saveState();
       renderSheet();
       syncNow();
@@ -272,16 +284,108 @@
     });
 
     $("#sheetGrid").addEventListener("click", (event) => {
-      const headerCell = event.target.closest("[data-header-key]");
-      if (headerCell) {
-        openHeaderEditor(headerCell.dataset.headerKey);
-        return;
+      if (event.target.closest("[data-header-key], [data-row-order][data-col-index]")) {
+        event.preventDefault();
+        event.stopPropagation();
       }
+    }, true);
+    $("#sheetGrid").addEventListener("pointerdown", handleSheetPointerDown);
+    $("#sheetGrid").addEventListener("pointermove", handleSheetPointerMove);
+    $("#sheetGrid").addEventListener("pointerup", handleSheetPointerUp);
+    $("#sheetGrid").addEventListener("pointercancel", clearSheetTap);
+    $("#editCellButton").addEventListener("click", openActiveEditor);
+    $("#zoomOutButton").addEventListener("click", () => adjustSheetZoom(-ZOOM_STEP));
+    $("#zoomInButton").addEventListener("click", () => adjustSheetZoom(ZOOM_STEP));
+    $("#zoomFitButton").addEventListener("click", fitSheetToWidth);
+    window.addEventListener("resize", () => applySheetScale());
+  }
 
-      const rowCell = event.target.closest("[data-row-order][data-col-index]");
-      if (!rowCell) return;
-      openRowEditor(Number(rowCell.dataset.rowOrder), Number(rowCell.dataset.colIndex));
-    });
+  function handleSheetPointerDown(event) {
+    const target = event.target.closest("[data-header-key], [data-row-order][data-col-index]");
+    if (!target) {
+      sheetTap = null;
+      return;
+    }
+
+    sheetTap = {
+      target,
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      time: Date.now(),
+      moved: false,
+    };
+  }
+
+  function handleSheetPointerMove(event) {
+    if (!sheetTap || sheetTap.pointerId !== event.pointerId) return;
+    const distance = Math.hypot(event.clientX - sheetTap.x, event.clientY - sheetTap.y);
+    if (distance > TAP_MOVE_THRESHOLD) {
+      sheetTap.moved = true;
+      $("#sheetWrap").classList.add("is-dragging");
+    }
+  }
+
+  function handleSheetPointerUp(event) {
+    if (!sheetTap || sheetTap.pointerId !== event.pointerId) return;
+    const tap = sheetTap;
+    clearSheetTap();
+    $("#sheetWrap").classList.remove("is-dragging");
+    if (tap.moved || Date.now() - tap.time > TAP_TIME_LIMIT) return;
+    handleSheetTap(tap.target);
+  }
+
+  function clearSheetTap() {
+    sheetTap = null;
+    $("#sheetWrap").classList.remove("is-dragging");
+  }
+
+  function handleSheetTap(target) {
+    const headerCell = target.closest("[data-header-key]");
+    if (headerCell) {
+      const nextActive = { type: "header", key: headerCell.dataset.headerKey };
+      if (shouldSelectBeforeEdit(nextActive)) return selectCellForEdit(nextActive);
+      pendingCellEdit = false;
+      openHeaderEditor(nextActive.key);
+      return;
+    }
+
+    const rowCell = target.closest("[data-row-order][data-col-index]");
+    if (!rowCell) return;
+    const columnIndex = Number(rowCell.dataset.colIndex);
+    const rowOrder = Number(rowCell.dataset.rowOrder);
+    const nextActive = { type: "row", order: rowOrder, colIndex: Math.max(1, columnIndex) };
+    if (shouldSelectBeforeEdit(nextActive)) return selectCellForEdit(nextActive);
+    pendingCellEdit = false;
+    openRowEditor(rowOrder, columnIndex);
+  }
+
+  function shouldSelectBeforeEdit(nextActive) {
+    return isCoarsePointer() && (!pendingCellEdit || !sameActiveCell(nextActive));
+  }
+
+  function selectCellForEdit(nextActive) {
+    active = nextActive;
+    pendingCellEdit = true;
+    saveState();
+    renderSheet();
+  }
+
+  function openActiveEditor() {
+    if (!state.session.connected) return;
+    pendingCellEdit = false;
+    if (active.type === "header") openHeaderEditor(active.key);
+    else openRowEditor(active.order || 1, active.colIndex || 1);
+  }
+
+  function sameActiveCell(nextActive) {
+    if (!active || active.type !== nextActive.type) return false;
+    if (nextActive.type === "header") return active.key === nextActive.key;
+    return Number(active.order) === Number(nextActive.order) && Number(active.colIndex) === Number(nextActive.colIndex);
+  }
+
+  function isCoarsePointer() {
+    return window.matchMedia?.("(pointer: coarse)")?.matches;
   }
 
   function bindEditor() {
@@ -494,6 +598,7 @@
     state.header = { ...archive.header };
     state.rows = archive.rows.map((row) => ({ ...row }));
     active = { type: "row", order: 1, colIndex: 1 };
+    pendingCellEdit = false;
     saveState();
     closeArchives();
     renderSheet();
@@ -532,6 +637,7 @@
     $("#loginView").classList.toggle("is-hidden", state.session.connected);
     $("#sheetView").classList.toggle("is-hidden", !state.session.connected);
     $("#adminButton").classList.toggle("is-visible", isAdminSession());
+    updateEditButton();
     updateSyncBadge();
 
     if (!state.session.connected) {
@@ -558,6 +664,66 @@
       renderColumnHeaderRow(),
       ...Array.from({ length: DATA_ROWS }, (_, index) => renderDataRow(index + 1)),
     ].join("");
+    applySheetScale();
+    updateZoomControls();
+    updateEditButton();
+  }
+
+  function applySheetScale() {
+    const grid = $("#sheetGrid");
+    const stage = $("#sheetStage");
+    if (!grid || !stage) return;
+
+    grid.style.setProperty("--sheet-scale", String(sheetScale));
+    requestAnimationFrame(() => {
+      const naturalWidth = grid.scrollWidth || grid.offsetWidth || 1;
+      const naturalHeight = grid.scrollHeight || grid.offsetHeight || 1;
+      stage.style.setProperty("--sheet-stage-width", `${Math.ceil(naturalWidth * sheetScale)}px`);
+      stage.style.setProperty("--sheet-stage-height", `${Math.ceil(naturalHeight * sheetScale)}px`);
+    });
+  }
+
+  function adjustSheetZoom(delta) {
+    setSheetScale(sheetScale + delta);
+  }
+
+  function fitSheetToWidth() {
+    const wrap = $("#sheetWrap");
+    const grid = $("#sheetGrid");
+    if (!wrap || !grid) return;
+    const naturalWidth = grid.scrollWidth || grid.offsetWidth || 1;
+    const usableWidth = Math.max(240, wrap.clientWidth - 18);
+    setSheetScale(usableWidth / naturalWidth);
+    wrap.scrollLeft = 0;
+  }
+
+  function setSheetScale(nextScale) {
+    sheetScale = clamp(Number(nextScale) || 1, MIN_SHEET_SCALE, MAX_SHEET_SCALE);
+    try {
+      localStorage.setItem(SHEET_ZOOM_KEY, String(sheetScale));
+    } catch {}
+    applySheetScale();
+    updateZoomControls();
+  }
+
+  function loadSheetScale() {
+    try {
+      const stored = Number(localStorage.getItem(SHEET_ZOOM_KEY));
+      if (Number.isFinite(stored) && stored > 0) return clamp(stored, MIN_SHEET_SCALE, MAX_SHEET_SCALE);
+    } catch {}
+    return 1;
+  }
+
+  function updateZoomControls() {
+    const fitButton = $("#zoomFitButton");
+    if (!fitButton) return;
+    fitButton.textContent = `${Math.round(sheetScale * 100)}%`;
+  }
+
+  function updateEditButton() {
+    const button = $("#editCellButton");
+    if (!button) return;
+    button.classList.toggle("is-visible", Boolean(state.session.connected && pendingCellEdit && isCoarsePointer()));
   }
 
   function renderMergedRow(rowClass, content, cellClass) {
@@ -617,6 +783,7 @@
   function openHeaderEditor(key) {
     const field = headerFields.find((item) => item.key === key);
     if (!field) return;
+    pendingCellEdit = false;
     active = { type: "header", key };
     editorValue = state.header[key] || "";
     $("#editorPosition").textContent = "Entete";
@@ -634,6 +801,7 @@
 
     const row = ensureRow(order);
     const column = columns[columnIndex];
+    pendingCellEdit = false;
     active = { type: "row", order: row.order, colIndex: columnIndex };
     editorValue = clean(row[column.key]);
     $("#editorPosition").textContent = "Ligne " + row.order + " - colonne " + (columnIndex + 1) + "/" + columns.length;
@@ -719,6 +887,7 @@
 
   function closeEditor() {
     writeActiveValue();
+    pendingCellEdit = false;
     $("#cellEditor").classList.remove("is-open");
     $("#cellEditor").setAttribute("aria-hidden", "true");
     renderSheet();
@@ -1967,6 +2136,10 @@
       groups[value].push(item);
       return groups;
     }, {});
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
   }
 
   function makeId(prefix) {

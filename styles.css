@@ -30,7 +30,7 @@ body {
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-  touch-action: manipulation;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 body {
@@ -546,20 +546,87 @@ button.sheet-cell {
   background: #fff2cc;
 }
 
+.zoom-tools {
+  position: fixed;
+  right: max(0.75rem, env(safe-area-inset-right));
+  bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 76px);
+  z-index: 19;
+  display: grid;
+  grid-template-columns: 42px 48px 42px;
+  gap: 0.25rem;
+}
+
+.zoom-button,
+.edit-pill {
+  border: 1px solid rgba(255, 255, 255, 0.72);
+  border-radius: 6px;
+  color: #fff;
+  font-weight: 900;
+  background: rgba(31, 78, 121, 0.97);
+  box-shadow: 0 10px 28px rgba(31, 78, 121, 0.22);
+}
+
+.zoom-button {
+  min-height: 38px;
+  padding: 0;
+  font-size: 1rem;
+}
+
+.zoom-button.is-wide {
+  font-size: 0.78rem;
+}
+
+.edit-pill {
+  position: fixed;
+  left: 50%;
+  bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 76px);
+  z-index: 20;
+  display: none;
+  min-height: 42px;
+  padding: 0 1rem;
+  font-size: 0.9rem;
+  transform: translateX(-50%);
+}
+
+.edit-pill.is-visible {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .sheet-wrap {
   width: 100vw;
   height: 100vh;
   overflow: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   background: #fff;
+  cursor: grab;
+  touch-action: pan-x pan-y pinch-zoom;
+  user-select: none;
+}
+
+.sheet-wrap.is-dragging {
+  cursor: grabbing;
+}
+
+.sheet-stage {
+  position: relative;
+  width: var(--sheet-stage-width, max-content);
+  height: var(--sheet-stage-height, auto);
 }
 
 .excel-sheet {
+  position: absolute;
+  top: 0;
+  left: 0;
   display: grid;
   width: max-content;
-  min-height: 100vh;
+  min-height: auto;
   background: #fff;
   font-family: "Gill Sans MT", "Gill Sans", Calibri, Arial, sans-serif;
+  transform: scale(var(--sheet-scale, 1));
+  transform-origin: top left;
 }
 
 .excel-row {
@@ -585,7 +652,8 @@ button.sheet-cell {
 button.excel-cell {
   width: 100%;
   cursor: pointer;
-  touch-action: manipulation;
+  -webkit-tap-highlight-color: rgba(31, 78, 121, 0.12);
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 .merged {
@@ -882,6 +950,21 @@ button.excel-cell {
     font-size: 0.68rem;
   }
 
+  .zoom-tools {
+    right: 0.45rem;
+    bottom: calc(4.95rem + env(safe-area-inset-bottom));
+    grid-template-columns: 38px 46px 38px;
+  }
+
+  .zoom-button {
+    min-height: 36px;
+  }
+
+  .edit-pill {
+    bottom: calc(4.95rem + env(safe-area-inset-bottom));
+    min-height: 38px;
+  }
+
   .admin-grid,
   .admin-lists {
     grid-template-columns: 1fr;
@@ -1099,6 +1182,8 @@ button.excel-cell {
 
   .login-view,
   .floating-tools,
+  .zoom-tools,
+  .edit-pill,
   .fab,
   .editor,
   .archives,
@@ -1116,11 +1201,17 @@ button.excel-cell {
     padding: 0;
   }
 
+  .sheet-stage {
+    width: auto !important;
+    height: auto !important;
+  }
+
   body.pdf-export-mode .data-row.is-empty {
     display: none !important;
   }
 
   .excel-sheet {
+    position: static;
     min-height: auto;
     transform: none;
     transform-origin: top left;
