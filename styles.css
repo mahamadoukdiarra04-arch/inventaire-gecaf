@@ -1,17 +1,26 @@
 :root {
   color-scheme: light;
-  --ink: #14202a;
-  --muted: #687682;
+  --ink: #13212b;
+  --muted: #61717d;
   --paper: #ffffff;
-  --line: #a6a6a6;
-  --header: #1f4e79;
+  --line: #ccd5dd;
+  --soft-line: #e3e9ef;
+  --header: #123142;
+  --header-2: #1f4e79;
+  --accent: #0f8a8a;
+  --accent-dark: #0a6667;
+  --danger: #9f341f;
+  --warning: #f5b942;
   --excel-soft: #ddebf7;
   --blue: #00b0f0;
   --blue-dark: #008fc6;
   --yellow: #fff2cc;
   --yellow-strong: #ffd966;
   --panel: #ffffff;
-  --shadow: 0 18px 45px rgba(25, 51, 74, 0.14);
+  --surface: #f5f7f8;
+  --surface-strong: #edf2f4;
+  --shadow: 0 24px 70px rgba(15, 33, 46, 0.16);
+  --shadow-soft: 0 12px 32px rgba(15, 33, 46, 0.1);
   --radius: 8px;
   font-family:
     "Gill Sans MT", "Gill Sans", Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
@@ -36,7 +45,7 @@ html {
 body {
   margin: 0;
   color: var(--ink);
-  background: #fff;
+  background: var(--surface);
 }
 
 button,
@@ -55,21 +64,23 @@ input,
 select,
 textarea {
   width: 100%;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 0.82rem 0.88rem;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  padding: 0.86rem 0.92rem;
   color: var(--ink);
   font-size: 16px;
-  background: #fff;
+  background: #fbfcfd;
   outline: none;
   touch-action: manipulation;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
 input:focus,
 select:focus,
 textarea:focus {
-  border-color: var(--blue-dark);
-  box-shadow: 0 0 0 3px rgba(14, 173, 215, 0.2);
+  border-color: var(--accent);
+  background: #fff;
+  box-shadow: 0 0 0 4px rgba(15, 138, 138, 0.14);
 }
 
 textarea {
@@ -85,10 +96,8 @@ textarea {
   display: grid;
   min-height: 100vh;
   place-items: center;
-  padding: 1rem;
-  background:
-    linear-gradient(180deg, rgba(36, 87, 127, 0.13), transparent 40%),
-    var(--paper);
+  padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
+  background: var(--surface);
 }
 
 .login-view.is-hidden,
@@ -97,12 +106,43 @@ textarea {
 }
 
 .login-card {
-  width: min(460px, 100%);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 1.25rem;
+  width: min(440px, 100%);
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  padding: 1rem;
   background: var(--panel);
   box-shadow: var(--shadow);
+}
+
+.login-card::before {
+  display: block;
+  width: 48px;
+  height: 3px;
+  margin-bottom: 1rem;
+  border-radius: 999px;
+  background: var(--accent);
+  content: "";
+}
+
+.login-brand {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.login-mark {
+  display: grid;
+  width: 48px;
+  height: 48px;
+  border: 1px solid rgba(15, 138, 138, 0.2);
+  border-radius: 8px;
+  place-items: center;
+  color: #fff;
+  font-size: 1.35rem;
+  font-weight: 900;
+  background: var(--header);
+  box-shadow: var(--shadow-soft);
 }
 
 .login-card h1,
@@ -115,11 +155,13 @@ textarea {
 }
 
 .login-card h1 {
-  font-size: 2rem;
+  font-size: 1.6rem;
+  font-weight: 900;
 }
 
 .muted {
   color: var(--muted);
+  line-height: 1.45;
 }
 
 .eyebrow {
@@ -133,8 +175,8 @@ textarea {
 
 .form-stack {
   display: grid;
-  gap: 0.85rem;
-  margin-top: 1rem;
+  gap: 0.8rem;
+  margin-top: 1.15rem;
 }
 
 .form-stack label,
@@ -149,28 +191,29 @@ textarea {
 .primary-button,
 .ghost-button,
 .icon-button {
-  min-height: 42px;
-  border-radius: 7px;
+  min-height: 44px;
+  border-radius: 8px;
   font-weight: 850;
   letter-spacing: 0;
 }
 
 .primary-button {
-  border: 1px solid var(--header);
+  border: 1px solid var(--accent-dark);
   padding: 0.72rem 1rem;
   color: #fff;
-  background: var(--header);
+  background: var(--accent-dark);
+  box-shadow: 0 10px 22px rgba(10, 102, 103, 0.2);
 }
 
 .primary-button:hover {
-  background: #183f5f;
+  background: #075657;
 }
 
 .ghost-button {
-  border: 1px solid var(--line);
+  border: 1px solid var(--soft-line);
   padding: 0.72rem 1rem;
   color: var(--ink);
-  background: #fff;
+  background: #f8fafb;
 }
 
 .compact {
@@ -181,21 +224,24 @@ textarea {
 .icon-button {
   display: inline-grid;
   width: 42px;
-  border: 0;
+  border: 1px solid rgba(18, 49, 66, 0.12);
   place-items: center;
   color: #fff;
   background: var(--header);
 }
 
 .icon-button.dark {
-  color: var(--ink);
-  background: #eef5f8;
+  color: var(--header);
+  background: #f2f6f7;
 }
 
 .sheet-view {
+  position: fixed;
+  inset: 0;
   min-height: 100vh;
-  padding: 0 0 6rem;
-  background: #fff;
+  overflow: hidden;
+  padding: 0;
+  background: var(--surface);
 }
 
 .sheet-title {
@@ -480,41 +526,55 @@ button.sheet-cell {
   position: fixed;
   right: max(1rem, env(safe-area-inset-right));
   bottom: max(1rem, env(safe-area-inset-bottom));
-  z-index: 12;
+  z-index: 22;
   display: grid;
-  width: 64px;
-  height: 64px;
+  width: 62px;
+  height: 62px;
   border: 0;
-  border-radius: 50%;
+  border-radius: 8px;
   place-items: center;
   color: #fff;
   font-size: 2.2rem;
   font-weight: 800;
   line-height: 1;
-  background: var(--header);
-  box-shadow: 0 16px 34px rgba(36, 87, 127, 0.36);
+  background: var(--accent-dark);
+  box-shadow: 0 16px 34px rgba(10, 102, 103, 0.28);
 }
 
 .floating-tools {
   position: fixed;
-  left: 0.85rem;
-  bottom: 0.85rem;
+  right: calc(max(1rem, env(safe-area-inset-right)) + 74px);
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  left: max(1rem, env(safe-area-inset-left));
   z-index: 18;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-start;
-  gap: 0.4rem;
-  max-width: min(620px, calc(100vw - 6.8rem));
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, auto));
+  align-items: center;
+  gap: 0.35rem;
+  width: fit-content;
+  max-width: calc(100vw - 7.2rem);
+  border: 1px solid rgba(227, 233, 239, 0.92);
+  border-radius: 8px;
+  padding: 0.38rem;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(14px);
 }
 
 .tool-button {
-  min-height: 34px;
-  border: 1px solid rgba(255, 255, 255, 0.68);
-  border-radius: 5px;
-  padding: 0.35rem 0.62rem;
-  color: #fff;
+  min-height: 38px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 0.42rem 0.68rem;
+  color: var(--header);
   font-weight: 850;
-  background: rgba(31, 78, 121, 0.96);
+  background: transparent;
+}
+
+.tool-button:hover,
+.tool-button:focus-visible {
+  background: #eef5f5;
+  border-color: rgba(15, 138, 138, 0.16);
 }
 
 .admin-tool {
@@ -529,21 +589,22 @@ button.sheet-cell {
 .sync-badge {
   display: inline-flex;
   align-items: center;
-  min-height: 34px;
-  border: 1px solid rgba(31, 78, 121, 0.2);
-  border-radius: 5px;
-  padding: 0.35rem 0.55rem;
-  color: #1f4e79;
+  min-height: 38px;
+  border: 1px solid rgba(15, 138, 138, 0.16);
+  border-radius: 7px;
+  padding: 0.42rem 0.6rem;
+  color: var(--accent-dark);
   font-size: 0.76rem;
   font-weight: 850;
-  background: rgba(255, 255, 255, 0.94);
+  background: #eef7f6;
 }
 
 .sync-badge[data-status="offline"],
 .sync-badge[data-status="pending"],
 .sync-badge[data-status="error"] {
-  color: #6c4b00;
-  background: #fff2cc;
+  border-color: rgba(245, 185, 66, 0.45);
+  color: #674700;
+  background: #fff5d8;
 }
 
 .zoom-tools {
@@ -552,18 +613,23 @@ button.sheet-cell {
   bottom: calc(max(1rem, env(safe-area-inset-bottom)) + 76px);
   z-index: 19;
   display: grid;
-  grid-template-columns: 42px 48px 42px;
-  gap: 0.25rem;
+  grid-template-columns: 42px 54px 42px;
+  gap: 0.28rem;
+  border: 1px solid rgba(227, 233, 239, 0.92);
+  border-radius: 8px;
+  padding: 0.32rem;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow-soft);
+  backdrop-filter: blur(14px);
 }
 
 .zoom-button,
 .edit-pill {
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 6px;
-  color: #fff;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--header);
   font-weight: 900;
-  background: rgba(31, 78, 121, 0.97);
-  box-shadow: 0 10px 28px rgba(31, 78, 121, 0.22);
+  background: #f2f6f7;
 }
 
 .zoom-button {
@@ -583,8 +649,12 @@ button.sheet-cell {
   z-index: 20;
   display: none;
   min-height: 42px;
-  padding: 0 1rem;
+  border-color: rgba(15, 138, 138, 0.16);
+  padding: 0 1.05rem;
+  color: #fff;
   font-size: 0.9rem;
+  background: var(--accent-dark);
+  box-shadow: 0 12px 26px rgba(10, 102, 103, 0.25);
   transform: translateX(-50%);
 }
 
@@ -600,7 +670,7 @@ button.sheet-cell {
   overflow: auto;
   overscroll-behavior: contain;
   -webkit-overflow-scrolling: touch;
-  background: #fff;
+  background: var(--surface);
   cursor: grab;
   touch-action: pan-x pan-y pinch-zoom;
   user-select: none;
@@ -625,6 +695,7 @@ button.sheet-cell {
   min-height: auto;
   background: #fff;
   font-family: "Gill Sans MT", "Gill Sans", Calibri, Arial, sans-serif;
+  box-shadow: 0 8px 28px rgba(15, 33, 46, 0.12);
   transform: scale(var(--sheet-scale, 1));
   transform-origin: top left;
 }
@@ -766,24 +837,26 @@ button.excel-cell {
   left: 0;
   max-height: min(72vh, 620px);
   overflow: auto;
-  border-radius: 18px 18px 0 0;
-  padding: 0.65rem 1rem calc(1rem + env(safe-area-inset-bottom));
+  border: 1px solid var(--soft-line);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  padding: 0.8rem 1rem calc(1rem + env(safe-area-inset-bottom));
   background: #fff;
-  box-shadow: 0 -22px 50px rgba(10, 24, 36, 0.22);
+  box-shadow: 0 -24px 64px rgba(10, 24, 36, 0.24);
 }
 
 .archives-list {
   display: grid;
-  gap: 0.55rem;
+  gap: 0.6rem;
 }
 
 .archive-item,
 .archive-empty {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 0.82rem;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  padding: 0.9rem;
   text-align: left;
-  background: #fff;
+  background: #fbfcfd;
 }
 
 .archive-item strong,
@@ -811,25 +884,27 @@ button.excel-cell {
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: calc(1rem + env(safe-area-inset-top)) 1rem calc(1rem + env(safe-area-inset-bottom));
-  background: #fff;
+  padding: calc(1rem + env(safe-area-inset-top)) 1rem calc(1.2rem + env(safe-area-inset-bottom));
+  background: var(--surface);
 }
 
 .admin-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: 0.8rem;
+  max-width: 1040px;
+  margin: 0 auto 1rem;
 }
 
 .admin-card,
 .admin-lists section {
   display: grid;
-  gap: 0.65rem;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 0.85rem;
+  gap: 0.7rem;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  padding: 0.95rem;
   background: #fff;
+  box-shadow: var(--shadow-soft);
 }
 
 .admin-card h3,
@@ -841,7 +916,9 @@ button.excel-cell {
 .admin-lists {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.75rem;
+  gap: 0.8rem;
+  max-width: 1040px;
+  margin: 0 auto;
 }
 
 .admin-list {
@@ -850,10 +927,10 @@ button.excel-cell {
 }
 
 .admin-list-item {
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  padding: 0.72rem;
-  background: #f8fbfd;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  padding: 0.78rem;
+  background: #f8fafb;
 }
 
 .admin-list-item strong,
@@ -880,7 +957,8 @@ button.excel-cell {
 .editor-backdrop {
   position: absolute;
   inset: 0;
-  background: rgba(10, 24, 36, 0.45);
+  background: rgba(10, 24, 36, 0.52);
+  backdrop-filter: blur(2px);
 }
 
 .editor-panel {
@@ -888,10 +966,14 @@ button.excel-cell {
   right: 0;
   bottom: 0;
   left: 0;
-  border-radius: 18px 18px 0 0;
-  padding: 0.65rem 1rem calc(1rem + env(safe-area-inset-bottom));
+  max-width: 760px;
+  margin: 0 auto;
+  border: 1px solid var(--soft-line);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  padding: 0.8rem 1rem calc(1rem + env(safe-area-inset-bottom));
   background: #fff;
-  box-shadow: 0 -22px 50px rgba(10, 24, 36, 0.22);
+  box-shadow: 0 -24px 64px rgba(10, 24, 36, 0.24);
 }
 
 .editor-handle {
@@ -911,7 +993,8 @@ button.excel-cell {
 }
 
 .editor-heading h2 {
-  font-size: 1.25rem;
+  font-size: 1.22rem;
+  font-weight: 900;
 }
 
 .editor-control {
@@ -932,27 +1015,41 @@ button.excel-cell {
 
 @media (max-width: 780px) {
   .floating-tools {
-    left: 0.45rem;
-    bottom: 0.45rem;
-    max-width: calc(100vw - 5.6rem);
-    gap: 0.28rem;
+    right: calc(0.55rem + env(safe-area-inset-right) + 68px);
+    bottom: calc(0.55rem + env(safe-area-inset-bottom));
+    left: calc(0.55rem + env(safe-area-inset-left));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    width: auto;
+    max-width: none;
+    gap: 0.3rem;
+    padding: 0.34rem;
   }
 
   .tool-button {
-    min-height: 30px;
-    padding: 0.28rem 0.42rem;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0.32rem 0.42rem;
     font-size: 0.72rem;
   }
 
   .sync-badge {
-    min-height: 30px;
-    padding: 0.28rem 0.42rem;
+    justify-content: center;
+    min-height: 34px;
+    padding: 0.32rem 0.42rem;
     font-size: 0.68rem;
+  }
+
+  .fab {
+    width: 58px;
+    height: 58px;
+    right: max(0.55rem, env(safe-area-inset-right));
+    bottom: calc(0.55rem + env(safe-area-inset-bottom));
+    font-size: 2rem;
   }
 
   .zoom-tools {
     right: 0.45rem;
-    bottom: calc(4.95rem + env(safe-area-inset-bottom));
+    bottom: calc(8.2rem + env(safe-area-inset-bottom));
     grid-template-columns: 38px 46px 38px;
   }
 
@@ -961,8 +1058,33 @@ button.excel-cell {
   }
 
   .edit-pill {
-    bottom: calc(4.95rem + env(safe-area-inset-bottom));
+    bottom: calc(8.2rem + env(safe-area-inset-bottom));
     min-height: 38px;
+  }
+
+  .login-view {
+    align-items: end;
+    padding: calc(0.85rem + env(safe-area-inset-top)) 0.85rem calc(0.85rem + env(safe-area-inset-bottom));
+  }
+
+  .login-card {
+    padding: 0.95rem;
+  }
+
+  .login-card h1 {
+    font-size: 1.42rem;
+  }
+
+  .login-mark {
+    width: 44px;
+    height: 44px;
+  }
+
+  .editor-panel,
+  .archives-panel {
+    max-height: 82dvh;
+    padding-right: 0.85rem;
+    padding-left: 0.85rem;
   }
 
   .admin-grid,
@@ -983,7 +1105,7 @@ button.excel-cell {
     margin: -0.55rem -0.55rem 0.65rem;
     padding: calc(0.55rem + env(safe-area-inset-top)) 0.55rem 0.55rem;
     background: #fff;
-    box-shadow: 0 1px 0 var(--line);
+    box-shadow: 0 1px 0 var(--soft-line);
   }
 
   .admin-panel .editor-heading h2 {
@@ -1023,7 +1145,7 @@ button.excel-cell {
 
   .sheet-wrap {
     height: 100dvh;
-    padding-bottom: 5.4rem;
+    padding-bottom: 7.6rem;
   }
 
   .row-1 .excel-cell,
@@ -1052,7 +1174,7 @@ button.excel-cell {
   }
 
   .sheet-view {
-    padding-bottom: 5.5rem;
+    padding-bottom: 0;
   }
 
   .sheet-title {
@@ -1213,6 +1335,7 @@ button.excel-cell {
   .excel-sheet {
     position: static;
     min-height: auto;
+    box-shadow: none;
     transform: none;
     transform-origin: top left;
     zoom: 0.44;
