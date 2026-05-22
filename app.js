@@ -15,6 +15,7 @@
   const REMOTE_PROBE_TIMEOUT_MS = 8000;
   const SYNC_RETRY_BASE_MS = 4000;
   const SYNC_RETRY_MAX_MS = 60000;
+  const LOCAL_ARCHIVE_SUMMARY_LIMIT = 500;
   const SHEET_ZOOM_KEY = STORAGE_KEY + ":sheetZoom";
   const MIN_SHEET_SCALE = 0.16;
   const MAX_SHEET_SCALE = 1.15;
@@ -147,7 +148,7 @@
         session,
         header: { ...fallback.header, ...(parsed.header || {}) },
         rows: Array.isArray(parsed.rows) ? parsed.rows : [],
-        archives: Array.isArray(parsed.archives) ? parsed.archives : [],
+        archives: normalizeArchives(parsed.archives, parsed.syncQueue),
         teams: normalizeTeams(parsed.teams),
         users: normalizeUsers(parsed.users),
         syncQueue: Array.isArray(parsed.syncQueue) ? parsed.syncQueue : [],
@@ -161,14 +162,29 @@
   function saveState() {
     state.syncStatus.pending = state.syncQueue.length;
     state.syncStatus.online = navigator.onLine;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(getPersistableState()));
+    persistStateToLocalStorage();
     mirrorStateToOfflineDb();
     updateSyncBadge();
   }
 
+  function persistStateToLocalStorage() {
+    const compactState = getPersistableState();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(compactState));
+    } catch {
+      const emergencyState = {
+        ...compactState,
+        archives: compactState.archives.map((archive) => ({ ...archive, rows: [], hasDetails: false })),
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(emergencyState));
+    }
+  }
+
   function getPersistableState() {
+    const compactArchives = compactArchivesForStorage(state.archives);
     return {
       ...state,
+      archives: compactArchives,
       session: {
         ...state.session,
         connected: false,
@@ -288,7 +304,9 @@
     $("#archivesList").addEventListener("click", (event) => {
       const button = event.target.closest("[data-archive-id]");
       if (!button) return;
-      loadArchive(button.dataset.archiveId);
+      loadArchive(button.dataset.archiveId).catch(() => {
+        alert("Impossible de charger cette archive pour le moment.");
+      });
     });
 
     $("#sheetGrid").addEventListener("click", (event) => {
@@ -483,7 +501,9 @@
       const button = event.target.closest("[data-archive-id]");
       if (!button || !isAdminSession()) return;
       closeAdminPanel();
-      loadArchive(button.dataset.archiveId);
+      loadArchive(button.dataset.archiveId).catch(() => {
+        alert("Impossible de charger cette archive pour le moment.");
+      });
     });
   }
 
@@ -609,8 +629,8 @@
     list.innerHTML = archives.map(renderArchiveButton).join("");
   }
 
-  function loadArchive(id) {
-    const archive = getVisibleArchives().find((item) => item.id === id);
+  async function loadArchive(id) {
+    const archive = await ensureArchiveDetails(getVisibleArchives().find((item) => item.id === id));
     if (!archive) return;
     const wasAdmin = isAdminSession();
     if (!wasAdmin) archiveCurrentSheet();
@@ -623,12 +643,36 @@
       isAdmin: wasAdmin || Boolean(archive.session?.isAdmin),
     };
     state.header = { ...archive.header };
-    state.rows = archive.rows.map((row) => ({ ...row }));
+    state.rows = (archive.rows || []).map((row) => ({ ...row }));
     active = { type: "row", order: 1, colIndex: 1 };
     pendingCellEdit = false;
     saveState();
     closeArchives();
     renderSheet();
+  }
+
+  async function ensureArchiveDetails(archive) {
+    if (!archive) return null;
+    if (archive.hasDetails !== false && Array.isArray(archive.rows) && archive.rows.length) return archive;
+    if (!hasRemoteConfig() || !navigator.onLine) {
+      alert("Le detail de cette archive est sur le serveur. Reconnectez-vous pour l'ouvrir.");
+      return null;
+    }
+
+    const client = getSupabaseClient();
+    if (!client) return null;
+    const { data, error } = await client.from("inventory_sheets").select("*").eq("id", archive.id).limit(1);
+    if (error) throw error;
+    const sheet = data?.[0];
+    if (!sheet) return null;
+
+    const cells = await fetchSheetCells(client, sheet.id);
+    const fullArchive = sheetToArchive(sheet, cells);
+    fullArchive.hasDetails = true;
+    fullArchive.filledRows = getArchiveFilledRows(fullArchive);
+    state.archives = [fullArchive, ...state.archives.filter((item) => item.id !== fullArchive.id)].sort(sortArchives);
+    saveState();
+    return fullArchive;
   }
 
   function closeArchives() {
@@ -646,16 +690,17 @@
   }
 
   function renderArchiveButton(archive) {
-    const filledRows = archive.rows.filter((row) => columns.slice(1).some((column) => clean(row[column.key]))).length;
+    const filledRows = getArchiveFilledRows(archive);
     const title = [archive.session?.team, formatHeaderValue("date", archive.header.date), archive.header.agency, archive.session?.agent]
       .filter(Boolean)
       .join(" - ");
     const isActiveSheet = archive.status === "active";
     const dateLabel = isActiveSheet ? "fiche active - mise a jour le" : "archivee le";
+    const rowLabel = Number.isFinite(filledRows) ? `${filledRows} ligne(s)` : "detail serveur";
     return `
       <button class="archive-item" type="button" data-archive-id="${archive.id}">
         <strong>${escapeHtml(title || (isActiveSheet ? "Fiche active" : "Fiche archivee"))}</strong>
-        <span>${filledRows} ligne(s) - ${dateLabel} ${escapeHtml(formatDateTime(archive.archivedAt))}</span>
+        <span>${rowLabel} - ${dateLabel} ${escapeHtml(formatDateTime(archive.archivedAt))}</span>
       </button>
     `;
   }
@@ -1935,12 +1980,10 @@
 
   async function mergeRemoteArchives(client, sheets) {
     if (!sheets.length) return;
-    const sheetIds = sheets.map((sheet) => sheet.id);
-    const cellsBySheet = groupBy(await fetchCellsForSheetIds(client, sheetIds), "sheet_id");
-    const remoteArchives = sheets.map((sheet) => sheetToArchive(sheet, cellsBySheet[sheet.id] || []));
     const existing = new Map(state.archives.map((archive) => [archive.id, archive]));
-    remoteArchives.forEach((archive) => existing.set(archive.id, archive));
-    state.archives = Array.from(existing.values()).sort((a, b) => String(b.archivedAt || "").localeCompare(String(a.archivedAt || "")));
+    sheets.forEach((sheet) => existing.set(sheet.id, sheetToArchiveSummary(sheet, existing.get(sheet.id))));
+    state.archives = Array.from(existing.values()).sort(sortArchives);
+    saveState();
   }
 
   async function fetchSheetCells(client, sheetId) {
@@ -2139,6 +2182,8 @@
       id: sheet.id,
       status: sheet.status || "archived",
       archivedAt: sheet.archived_at || sheet.updated_at,
+      hasDetails: true,
+      filledRows: snapshot.rows.filter(rowHasContent).length,
       session: {
         connected: true,
         team: sheet.team_name,
@@ -2150,6 +2195,48 @@
       header: snapshot.header,
       rows: snapshot.rows,
     };
+  }
+
+  function sheetToArchiveSummary(sheet, existing = null) {
+    const hasPendingDetails = existing && archiveHasPendingSync(existing.id);
+    if (hasPendingDetails && existing?.rows?.length) return existing;
+    const header = existing?.header || {
+      date: String(sheet.archived_at || sheet.updated_at || "").slice(0, 10),
+      agency: "",
+      supervisor: "",
+      locked: false,
+    };
+    return {
+      id: sheet.id,
+      status: sheet.status || "archived",
+      archivedAt: sheet.archived_at || sheet.updated_at,
+      hasDetails: Boolean(existing?.rows?.length && existing?.hasDetails !== false),
+      filledRows: Number.isFinite(existing?.filledRows)
+        ? existing.filledRows
+        : (existing?.rows?.length ? getArchiveFilledRows(existing) : null),
+      session: {
+        connected: true,
+        team: sheet.team_name || existing?.session?.team || "",
+        teamKey: sheet.team_key || existing?.session?.teamKey || "",
+        agent: sheet.updated_by || sheet.created_by || existing?.session?.agent || "",
+        isAdmin: false,
+        connectedAt: sheet.updated_at || existing?.session?.connectedAt || "",
+      },
+      header,
+      rows: existing?.hasDetails !== false && existing?.rows?.length ? existing.rows : [],
+    };
+  }
+
+  function getArchiveFilledRows(archive) {
+    if (!archive) return NaN;
+    if (Number.isFinite(archive.filledRows)) return archive.filledRows;
+    if (!Array.isArray(archive.rows)) return NaN;
+    if (!archive.rows.length && archive.hasDetails === false) return NaN;
+    return archive.rows.filter(rowHasContent).length;
+  }
+
+  function sortArchives(a, b) {
+    return String(b?.archivedAt || "").localeCompare(String(a?.archivedAt || ""));
   }
 
   function cellsToSnapshot(cells) {
@@ -2296,6 +2383,42 @@
       });
     });
     return Array.from(map.values()).sort((a, b) => (a.teamName + a.agentName).localeCompare(b.teamName + b.agentName));
+  }
+
+  function normalizeArchives(archives, syncQueue = []) {
+    if (!Array.isArray(archives)) return [];
+    return compactArchivesForStorage(archives, syncQueue).map((archive) => ({
+      ...archive,
+      header: { date: "", agency: "", supervisor: "", locked: false, ...(archive.header || {}) },
+      session: { connected: true, team: "", teamKey: "", agent: "", isAdmin: false, connectedAt: "", ...(archive.session || {}) },
+      rows: Array.isArray(archive.rows) ? archive.rows : [],
+      hasDetails: archive.hasDetails !== false && Array.isArray(archive.rows) && archive.rows.length > 0,
+      filledRows: Number.isFinite(archive.filledRows) ? archive.filledRows : (archive.rows?.length ? getArchiveFilledRows(archive) : null),
+    }));
+  }
+
+  function compactArchivesForStorage(archives, syncQueue = state?.syncQueue || []) {
+    if (!Array.isArray(archives)) return [];
+    return archives
+      .slice()
+      .sort(sortArchives)
+      .slice(0, LOCAL_ARCHIVE_SUMMARY_LIMIT)
+      .map((archive) => {
+        const rows = Array.isArray(archive.rows) ? archive.rows : [];
+        const keepDetails = archiveHasPendingSync(archive.id, syncQueue);
+        return {
+          ...archive,
+          header: { date: "", agency: "", supervisor: "", locked: false, ...(archive.header || {}) },
+          filledRows: Number.isFinite(archive.filledRows) ? archive.filledRows : (rows.length ? rows.filter(rowHasContent).length : null),
+          hasDetails: keepDetails && rows.length > 0,
+          rows: keepDetails ? rows.map((row) => ({ ...row })) : [],
+        };
+      });
+  }
+
+  function archiveHasPendingSync(archiveId, syncQueue = state?.syncQueue || []) {
+    if (!archiveId) return false;
+    return syncQueue.some((action) => action.sheetId === archiveId || action.sheet?.id === archiveId);
   }
 
   async function hydrateFromOfflineDb() {
@@ -2450,7 +2573,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=19").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=20").catch(() => {});
     }
   }
 })();

@@ -1,4 +1,4 @@
-const CACHE_NAME = "gecaf-inv-v19";
+const CACHE_NAME = "gecaf-inv-v20";
 const PAGE_FALLBACK = "./";
 const ASSETS = [PAGE_FALLBACK, "./styles.css", "./app.js", "./supabase-config.js", "./manifest.webmanifest"];
 
@@ -34,19 +34,12 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  if (!isShellAsset(requestUrl)) return;
+
   event.respondWith(
     caches.match(event.request, { ignoreSearch: true }).then((cached) => {
       if (cached?.redirected) cached = null;
-      const fetched = fetch(event.request)
-        .then((response) => {
-          if (isCacheable(response)) {
-            const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
-          }
-          return response;
-        })
-        .catch(() => cached);
-      return cached || fetched;
+      return cached || fetch(event.request, { cache: "reload", redirect: "follow" });
     }),
   );
 });
@@ -65,4 +58,9 @@ async function handleNavigation(request) {
 
 function isCacheable(response) {
   return Boolean(response && response.ok && !response.redirected && response.type !== "opaqueredirect");
+}
+
+function isShellAsset(url) {
+  const path = "." + url.pathname.replace(/^\//, "/");
+  return ASSETS.includes(path) || (url.pathname === "/" && ASSETS.includes(PAGE_FALLBACK));
 }
