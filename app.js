@@ -11,6 +11,10 @@
   const REMOTE_CONFIG = window.GECAF_CONFIG || {};
   const REMOTE_PAGE_SIZE = 1000;
   const REMOTE_SHEET_BATCH_SIZE = 40;
+  const SYNC_CELL_BATCH_SIZE = 80;
+  const REMOTE_PROBE_TIMEOUT_MS = 8000;
+  const SYNC_RETRY_BASE_MS = 4000;
+  const SYNC_RETRY_MAX_MS = 60000;
   const SHEET_ZOOM_KEY = STORAGE_KEY + ":sheetZoom";
   const MIN_SHEET_SCALE = 0.16;
   const MAX_SHEET_SCALE = 1.15;
@@ -84,6 +88,7 @@
     bindExport();
     bindAdmin();
     bindConnectivity();
+    bindLifecycleSafety();
     render();
     hydrateFromOfflineDb();
     registerServiceWorker();
@@ -116,6 +121,9 @@
         remote: "local",
         pending: 0,
         lastSyncAt: "",
+        lastAttemptAt: "",
+        nextRetryAt: "",
+        attempts: 0,
         message: "Mode local",
       },
     };
@@ -258,7 +266,7 @@
       pendingCellEdit = false;
       saveState();
       renderSheet();
-      syncNow();
+      resumeRemoteSession({ force: true }).catch(() => {});
     });
 
     $("#adminButton").addEventListener("click", async () => {
@@ -454,7 +462,7 @@
       event.currentTarget.reset();
       saveState();
       renderAdminPanel();
-      syncNow();
+      syncNow({ force: true }).catch(() => {});
     });
 
     $("#userForm").addEventListener("submit", (event) => {
@@ -468,7 +476,7 @@
       event.currentTarget.reset();
       saveState();
       renderAdminPanel();
-      syncNow();
+      syncNow({ force: true }).catch(() => {});
     });
 
     $("#adminArchivesList").addEventListener("click", (event) => {
@@ -484,13 +492,32 @@
       state.syncStatus.online = true;
       state.syncStatus.message = "Connexion retablie";
       saveState();
-      syncNow();
+      resumeRemoteSession({ force: true }).catch(() => {});
     });
     window.addEventListener("offline", () => {
       state.syncStatus.online = false;
       state.syncStatus.remote = "offline";
       state.syncStatus.message = "Hors ligne";
       saveState();
+    });
+  }
+
+  function bindLifecycleSafety() {
+    const persistCurrentWork = () => {
+      flushOpenEditor();
+      saveState();
+    };
+
+    window.addEventListener("pagehide", persistCurrentWork);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") {
+        persistCurrentWork();
+        return;
+      }
+      if (state.session.connected) resumeRemoteSession().catch(() => {});
+    });
+    window.addEventListener("focus", () => {
+      if (state.session.connected) resumeRemoteSession().catch(() => {});
     });
   }
 
@@ -896,6 +923,10 @@
   function writeActiveValue() {
     if (active.type === "header") {
       const value = clean(editorValue);
+      if (clean(state.header[active.key]) === value) {
+        saveState();
+        return;
+      }
       state.header[active.key] = value;
       queueCellChange(0, active.key, value);
       saveState();
@@ -906,6 +937,10 @@
     const column = columns[active.colIndex];
     if (column && column.key !== "order") {
       const value = clean(editorValue);
+      if (clean(row[column.key]) === value) {
+        saveState();
+        return;
+      }
       row[column.key] = value;
       row.updatedAt = new Date().toISOString();
       row.updatedBy = state.session.agent;
@@ -1354,15 +1389,7 @@
     saveState();
 
     try {
-      await syncNow();
-      await loadRemoteActiveSheet();
-      await pullRemoteArchivesForTeam(state.session.teamKey);
-      startRealtime();
-      state.syncStatus.remote = "synced";
-      state.syncStatus.message = "Synchronise";
-      state.syncStatus.lastSyncAt = new Date().toISOString();
-      saveState();
-      render();
+      await resumeRemoteSession({ force: true });
     } catch (error) {
       state.syncStatus.remote = "error";
       state.syncStatus.message = "Sync en attente";
@@ -1375,7 +1402,7 @@
     createSyncTimer();
     if (hasRemoteConfig() && navigator.onLine) {
       try {
-        await syncNow();
+        await syncNow({ force: true });
         await pullRemoteAdminData();
       } catch {
         state.syncStatus.remote = "error";
@@ -1389,7 +1416,7 @@
   function createSyncTimer() {
     if (syncTimer) return;
     syncTimer = window.setInterval(() => {
-      if (state.session.connected) syncNow();
+      if (state.session.connected) resumeRemoteSession().catch(() => {});
     }, Number(REMOTE_CONFIG.syncIntervalMs) || 5000);
   }
 
@@ -1407,12 +1434,35 @@
     return supabaseClient;
   }
 
-  async function syncNow() {
+  async function resumeRemoteSession({ force = false } = {}) {
+    if (!state.session.connected || isAdminSession()) {
+      await syncNow({ force });
+      return state.syncQueue.length === 0;
+    }
+
+    const drained = await syncNow({ force });
+    if (!drained) return false;
+
+    const loaded = await loadRemoteActiveSheet({ skipIfLocalPending: true });
+    await pullRemoteArchivesForTeam(state.session.teamKey);
+    startRealtime();
+    state.syncStatus.remote = "synced";
+    state.syncStatus.message = loaded === false ? "Local protege" : "Synchronise";
+    state.syncStatus.lastSyncAt = new Date().toISOString();
+    saveState();
+    render();
+    return true;
+  }
+
+  async function syncNow({ force = false } = {}) {
+    compactSyncQueue();
+
     if (!hasRemoteConfig() || !navigator.onLine) {
       state.syncStatus.remote = navigator.onLine ? "local" : "offline";
       state.syncStatus.pending = state.syncQueue.length;
+      state.syncStatus.message = navigator.onLine ? "Mode local" : "Hors ligne";
       updateSyncBadge();
-      return;
+      return state.syncQueue.length === 0;
     }
 
     const client = getSupabaseClient();
@@ -1421,36 +1471,51 @@
       state.syncStatus.pending = 0;
       state.syncStatus.lastSyncAt = state.syncStatus.lastSyncAt || new Date().toISOString();
       updateSyncBadge();
-      return;
+      return true;
+    }
+
+    if (!force && state.syncStatus.nextRetryAt && Date.now() < Number(state.syncStatus.nextRetryAt)) {
+      state.syncStatus.remote = "pending";
+      state.syncStatus.pending = state.syncQueue.length;
+      updateSyncBadge();
+      return false;
     }
 
     if (syncInFlight) {
       state.syncStatus.remote = "syncing";
       state.syncStatus.pending = state.syncQueue.length;
       updateSyncBadge();
-      return;
+      return false;
     }
 
     syncInFlight = true;
     state.syncStatus.remote = "syncing";
     state.syncStatus.pending = state.syncQueue.length;
+    state.syncStatus.lastAttemptAt = new Date().toISOString();
+    state.syncStatus.message = "Synchronisation...";
     updateSyncBadge();
 
     const context = createSyncContext();
     try {
-      for (const action of [...state.syncQueue]) {
+      while (state.syncQueue.length) {
+        const batch = takeNextSyncBatch();
         try {
-          await sendSyncAction(client, action, context);
-          state.syncQueue = state.syncQueue.filter((item) => item.actionId !== action.actionId);
+          await assertRemoteReachable();
+          await sendSyncBatch(client, batch, context);
+          const done = new Set(batch.map((item) => item.actionId));
+          state.syncQueue = state.syncQueue.filter((item) => !done.has(item.actionId));
+          state.syncStatus.attempts = 0;
+          state.syncStatus.nextRetryAt = "";
           state.syncStatus.pending = state.syncQueue.length;
           state.syncStatus.lastSyncAt = new Date().toISOString();
           state.syncStatus.message = state.syncQueue.length ? "Synchronisation..." : "Synchronise";
           saveState();
         } catch (error) {
+          markSyncBatchFailed(batch, error);
           state.syncStatus.remote = "error";
           state.syncStatus.message = "Sync en attente";
           saveState();
-          console.warn("GECAF sync action failed", action?.type, error);
+          console.warn("GECAF sync batch failed", batch.map((item) => item?.type).join(","), error);
           break;
         }
       }
@@ -1462,6 +1527,7 @@
     state.syncStatus.remote = state.syncQueue.length ? "error" : "synced";
     state.syncStatus.message = state.syncQueue.length ? "Sync en attente" : "Synchronise";
     saveState();
+    return state.syncQueue.length === 0;
   }
 
   function createSyncContext() {
@@ -1469,6 +1535,149 @@
       activeSheetsByTeam: new Map(),
       sheetIdMap: new Map(),
     };
+  }
+
+  function compactSyncQueue() {
+    if (!Array.isArray(state.syncQueue) || !state.syncQueue.length) {
+      state.syncQueue = [];
+      return;
+    }
+
+    const latestByKey = new Map();
+    state.syncQueue.forEach((item, index) => {
+      const action = normalizeSyncAction(item, index);
+      if (!action) return;
+      latestByKey.set(getSyncCompactKey(action), action);
+    });
+
+    state.syncQueue = Array.from(latestByKey.values()).sort((a, b) => Number(a.sequence || 0) - Number(b.sequence || 0));
+    state.syncStatus.pending = state.syncQueue.length;
+  }
+
+  function normalizeSyncAction(item, index) {
+    if (!item?.type) return null;
+    const action = {
+      ...item,
+      actionId: item.actionId || makeId("op"),
+      queuedAt: item.queuedAt || item.updatedAt || new Date().toISOString(),
+      sequence: Number.isFinite(Number(item.sequence)) ? Number(item.sequence) : Date.now() + index,
+      attempts: Number(item.attempts || 0),
+    };
+    if (action.type === "upsertSheet") action.sheet = action.sheet || item.sheet || item;
+    return action;
+  }
+
+  function getSyncCompactKey(action) {
+    if (action.type === "upsertCell") {
+      return ["cell", action.sheetId, action.rowOrder, action.fieldKey].join(":");
+    }
+    if (action.type === "upsertSheet") return ["sheet", action.sheet?.id || action.id].join(":");
+    if (action.type === "archiveSheet") return ["archive", action.sheetId].join(":");
+    if (action.type === "upsertTeam") return ["team", action.teamKey].join(":");
+    if (action.type === "upsertUser") return ["user", action.teamKey, action.agentKey].join(":");
+    return [action.type, action.actionId].join(":");
+  }
+
+  function takeNextSyncBatch() {
+    const [first] = state.syncQueue;
+    if (!first) return [];
+    if (first.type !== "upsertCell") return [first];
+
+    const batch = [];
+    for (const action of state.syncQueue) {
+      if (action.type !== "upsertCell" || batch.length >= SYNC_CELL_BATCH_SIZE) break;
+      batch.push(action);
+    }
+    return batch;
+  }
+
+  async function sendSyncBatch(client, batch, context) {
+    if (!batch.length) return;
+    if (batch.every((action) => action.type === "upsertCell")) {
+      await sendCellBatch(client, batch, context);
+      return;
+    }
+    for (const action of batch) await sendSyncAction(client, action, context);
+  }
+
+  function markSyncBatchFailed(batch, error) {
+    const attempts = Number(state.syncStatus.attempts || 0) + 1;
+    const delay = Math.min(SYNC_RETRY_MAX_MS, SYNC_RETRY_BASE_MS * 2 ** Math.min(attempts - 1, 5));
+    const nextRetryAt = Date.now() + delay;
+    state.syncStatus.attempts = attempts;
+    state.syncStatus.nextRetryAt = String(nextRetryAt);
+    batch.forEach((failed) => {
+      const queued = state.syncQueue.find((item) => item.actionId === failed.actionId);
+      if (!queued) return;
+      queued.attempts = Number(queued.attempts || 0) + 1;
+      queued.lastError = getErrorMessage(error);
+      queued.lastAttemptAt = new Date().toISOString();
+    });
+  }
+
+  async function assertRemoteReachable() {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), REMOTE_PROBE_TIMEOUT_MS);
+    try {
+      const endpoint = `${REMOTE_CONFIG.supabaseUrl.replace(/\/$/, "")}/rest/v1/inventory_sheets?select=id&limit=1`;
+      const response = await fetch(endpoint, {
+        cache: "no-store",
+        signal: controller.signal,
+        headers: {
+          Accept: "application/json",
+          "Cache-Control": "no-cache",
+          Pragma: "no-cache",
+          apikey: REMOTE_CONFIG.supabaseAnonKey,
+          Authorization: `Bearer ${REMOTE_CONFIG.supabaseAnonKey}`,
+        },
+      });
+      if (!response.ok) throw new Error(`Serveur indisponible (${response.status})`);
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  async function sendCellBatch(client, actions, context) {
+    const groups = groupBy(actions, (action) => [action.sheetId, action.teamKey].join(":"));
+    for (const groupActions of Object.values(groups)) {
+      const first = groupActions[0];
+      const sheet = await sendUpsertSheet(client, {
+        id: first.sheetId,
+        team_key: first.teamKey,
+        team_name: first.teamName || state.session.team,
+        status: "active",
+        archived_at: null,
+        created_by: first.updatedBy,
+        updated_by: first.updatedBy,
+        updated_at: maxIso(groupActions.map((action) => action.updatedAt)),
+      }, context);
+      const sheetId = sheet?.id || getMappedSheetId(context, first.sheetId) || first.sheetId;
+      const rows = groupActions.map((action) => ({
+        sheet_id: sheetId,
+        row_order: Number(action.rowOrder),
+        field_key: action.fieldKey,
+        value: clean(action.value),
+        updated_at: action.updatedAt,
+        updated_by: action.updatedBy,
+      }));
+      await upsertInventoryCells(client, rows);
+    }
+  }
+
+  async function upsertInventoryCells(client, rows) {
+    if (!rows.length) return;
+    const rpcResult = await client.rpc("upsert_inventory_cells_newer", { p_cells: rows });
+    if (!rpcResult.error) return;
+    if (!isMissingRpcError(rpcResult.error)) throw rpcResult.error;
+
+    await throwOnError(
+      client.from("inventory_cells").upsert(rows, { onConflict: "sheet_id,row_order,field_key" }),
+    );
+  }
+
+  function isMissingRpcError(error) {
+    const message = String(error?.message || error?.details || "");
+    return error?.code === "PGRST202" || error?.code === "42883" || message.includes("upsert_inventory_cells_newer");
   }
 
   async function sendSyncAction(client, action, context = createSyncContext()) {
@@ -1547,19 +1756,14 @@
         updated_at: action.updatedAt,
       }, context);
       const sheetId = sheet?.id || getMappedSheetId(context, action.sheetId) || action.sheetId;
-      await throwOnError(
-        client.from("inventory_cells").upsert(
-          {
-            sheet_id: sheetId,
-            row_order: action.rowOrder,
-            field_key: action.fieldKey,
-            value: action.value,
-            updated_at: action.updatedAt,
-            updated_by: action.updatedBy,
-          },
-          { onConflict: "sheet_id,row_order,field_key" },
-        ),
-      );
+      await upsertInventoryCells(client, [{
+        sheet_id: sheetId,
+        row_order: action.rowOrder,
+        field_key: action.fieldKey,
+        value: action.value,
+        updated_at: action.updatedAt,
+        updated_by: action.updatedBy,
+      }]);
     }
   }
 
@@ -1659,10 +1863,16 @@
     await sendSyncAction(client, { actionId: makeId("op"), type: "upsertUser", ...user, updatedAt: new Date().toISOString() });
   }
 
-  async function loadRemoteActiveSheet() {
+  async function loadRemoteActiveSheet({ skipIfLocalPending = false } = {}) {
     const client = getSupabaseClient();
     if (!client || isAdminSession()) return;
     const teamKey = state.session.teamKey || normalizeTeam(state.session.team);
+    if (skipIfLocalPending && hasLocalPendingWork(teamKey)) {
+      state.syncStatus.remote = "pending";
+      state.syncStatus.message = "Local protege";
+      saveState();
+      return false;
+    }
     const { data, error } = await client
       .from("inventory_sheets")
       .select("*")
@@ -1675,12 +1885,13 @@
     const sheet = data?.[0];
     if (!sheet) {
       queueSync("upsertSheet", currentSheetPayload("active"));
-      await syncNow();
-      return;
+      await syncNow({ force: true });
+      return true;
     }
 
     const cells = await fetchSheetCells(client, sheet.id);
     applyRemoteSheet(sheet, cells);
+    return true;
   }
 
   async function pullRemoteArchivesForTeam(teamKey) {
@@ -1795,6 +2006,7 @@
   function applyRemoteCell(record) {
     if (!record || record.sheet_id !== state.sheetId) return;
     const rowOrder = Number(record.row_order);
+    if (hasPendingCellChange(record.sheet_id, rowOrder, record.field_key)) return;
     if (rowOrder === 0) {
       if (headerFields.some((field) => field.key === record.field_key)) state.header[record.field_key] = record.value || "";
       return;
@@ -1805,6 +2017,25 @@
       row.updatedAt = record.updated_at;
       row.updatedBy = record.updated_by;
     }
+  }
+
+  function hasLocalPendingWork(teamKey = state.session.teamKey || normalizeTeam(state.session.team)) {
+    compactSyncQueue();
+    return state.syncQueue.some((action) => {
+      if (action.teamKey && action.teamKey !== teamKey) return false;
+      if (action.sheet?.team_key && action.sheet.team_key !== teamKey) return false;
+      return ["upsertSheet", "archiveSheet", "upsertCell"].includes(action.type);
+    });
+  }
+
+  function hasPendingCellChange(sheetId, rowOrder, fieldKey) {
+    return state.syncQueue.some(
+      (action) =>
+        action.type === "upsertCell" &&
+        action.sheetId === sheetId &&
+        Number(action.rowOrder) === Number(rowOrder) &&
+        action.fieldKey === fieldKey,
+    );
   }
 
   function startRealtime() {
@@ -1874,7 +2105,14 @@
 
   function queueSync(type, payload) {
     if (applyingRemote) return;
-    const action = payload?.type ? payload : { actionId: makeId("op"), type, ...payload, updatedAt: payload?.updatedAt || new Date().toISOString() };
+    const now = new Date().toISOString();
+    const action = payload?.type
+      ? { ...payload }
+      : { actionId: makeId("op"), type, ...payload, updatedAt: payload?.updatedAt || now };
+    action.actionId = action.actionId || makeId("op");
+    action.queuedAt = action.queuedAt || action.updatedAt || now;
+    action.sequence = Number.isFinite(Number(action.sequence)) ? Number(action.sequence) : Date.now() + state.syncQueue.length;
+    action.attempts = Number(action.attempts || 0);
     if (action.type === "upsertCell") {
       state.syncQueue = state.syncQueue.filter(
         (item) =>
@@ -1891,6 +2129,7 @@
       state.syncQueue = state.syncQueue.filter((item) => !(item.type === "upsertSheet" && item.sheet?.id === action.sheet?.id));
     }
     state.syncQueue.push(action);
+    compactSyncQueue();
     state.syncStatus.pending = state.syncQueue.length;
   }
 
@@ -1946,8 +2185,10 @@
     else if (pending) label = `A synchroniser (${pending})`;
     else if (remote === "syncing") label = "Sync...";
     else if (remote === "error") label = "Sync en attente";
+    else if (remote === "pending") label = "Reprise sync...";
     else label = "Synchronise";
     badge.textContent = label;
+    badge.title = state.syncQueue?.[0]?.lastError || state.syncStatus?.message || label;
     badge.dataset.status = !navigator.onLine ? "offline" : pending ? "pending" : remote;
   }
 
@@ -2129,9 +2370,18 @@
     });
   }
 
+  function maxIso(values) {
+    const sorted = values.filter(Boolean).sort();
+    return sorted[sorted.length - 1] || new Date().toISOString();
+  }
+
+  function getErrorMessage(error) {
+    return clean(error?.message || error?.details || error?.hint || error) || "Erreur de synchronisation";
+  }
+
   function groupBy(items, key) {
     return items.reduce((groups, item) => {
-      const value = item[key];
+      const value = typeof key === "function" ? key(item) : item[key];
       groups[value] = groups[value] || [];
       groups[value].push(item);
       return groups;
@@ -2200,7 +2450,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=14").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=19").catch(() => {});
     }
   }
 })();
