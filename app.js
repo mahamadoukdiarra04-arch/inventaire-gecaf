@@ -18,8 +18,9 @@
   const LOCAL_ARCHIVE_SUMMARY_LIMIT = 500;
   const SHEET_ZOOM_KEY = STORAGE_KEY + ":sheetZoom";
   const MIN_SHEET_SCALE = 0.16;
-  const MAX_SHEET_SCALE = 1.15;
+  const MAX_SHEET_SCALE = 2.25;
   const ZOOM_STEP = 0.12;
+  const PINCH_MIN_DISTANCE = 24;
   const TAP_MOVE_THRESHOLD = 12;
   const TAP_TIME_LIMIT = 700;
 
@@ -78,6 +79,8 @@
   let applyingRemote = false;
   let sheetScale = loadSheetScale();
   let sheetTap = null;
+  let sheetPointers = new Map();
+  let pinchGesture = null;
   let pendingCellEdit = false;
 
   document.addEventListener("DOMContentLoaded", init);
@@ -309,6 +312,17 @@
       });
     });
 
+    const sheetWrap = $("#sheetWrap");
+    sheetWrap.addEventListener("pointerdown", handleSheetGesturePointerDown);
+    sheetWrap.addEventListener("pointermove", handleSheetGesturePointerMove, { passive: false });
+    sheetWrap.addEventListener("pointerup", handleSheetGesturePointerEnd);
+    sheetWrap.addEventListener("pointercancel", handleSheetGesturePointerEnd);
+    sheetWrap.addEventListener("lostpointercapture", handleSheetGesturePointerEnd);
+    sheetWrap.addEventListener("touchstart", handleSheetTouchStart, { passive: true });
+    sheetWrap.addEventListener("touchmove", handleSheetTouchMove, { passive: false });
+    sheetWrap.addEventListener("touchend", handleSheetTouchEnd);
+    sheetWrap.addEventListener("touchcancel", handleSheetTouchEnd);
+
     $("#sheetGrid").addEventListener("click", (event) => {
       if (event.target.closest("[data-header-key], [data-row-order][data-col-index]")) {
         event.preventDefault();
@@ -324,6 +338,107 @@
     $("#zoomInButton").addEventListener("click", () => adjustSheetZoom(ZOOM_STEP));
     $("#zoomFitButton").addEventListener("click", fitSheetToWidth);
     window.addEventListener("resize", () => applySheetScale());
+  }
+
+  function handleSheetGesturePointerDown(event) {
+    if (event.pointerType === "mouse" || (event.pointerType === "touch" && "TouchEvent" in window)) return;
+    sheetPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (sheetPointers.size === 2) startPinchGesture(getGesturePoints());
+  }
+
+  function handleSheetGesturePointerMove(event) {
+    if (!sheetPointers.has(event.pointerId)) return;
+
+    sheetPointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (!pinchGesture || sheetPointers.size < 2) return;
+
+    event.preventDefault();
+    clearSheetTap();
+
+    updatePinchGesture(getGesturePoints());
+  }
+
+  function handleSheetGesturePointerEnd(event) {
+    if (!sheetPointers.has(event.pointerId)) return;
+
+    sheetPointers.delete(event.pointerId);
+    if (sheetPointers.size < 2 && pinchGesture) {
+      pinchGesture = null;
+      persistSheetScale();
+      $("#sheetWrap").classList.remove("is-pinching");
+    }
+  }
+
+  function handleSheetTouchStart(event) {
+    if (event.touches.length === 2) startPinchGesture(getTouchGesturePoints(event));
+  }
+
+  function handleSheetTouchMove(event) {
+    if (event.touches.length !== 2) return;
+    if (!pinchGesture) startPinchGesture(getTouchGesturePoints(event));
+    if (!pinchGesture) return;
+
+    event.preventDefault();
+    updatePinchGesture(getTouchGesturePoints(event));
+  }
+
+  function handleSheetTouchEnd(event) {
+    if (event.touches.length >= 2 || !pinchGesture) return;
+    pinchGesture = null;
+    persistSheetScale();
+    $("#sheetWrap").classList.remove("is-pinching");
+  }
+
+  function startPinchGesture(points) {
+    const wrap = $("#sheetWrap");
+    if (!wrap) return;
+
+    const distance = getGestureDistance(points);
+    if (distance < PINCH_MIN_DISTANCE) return;
+
+    const center = getGestureCenter(points);
+    const rect = wrap.getBoundingClientRect();
+    pinchGesture = {
+      startDistance: distance,
+      startScale: sheetScale,
+      anchorX: (wrap.scrollLeft + center.x - rect.left) / sheetScale,
+      anchorY: (wrap.scrollTop + center.y - rect.top) / sheetScale,
+    };
+    clearSheetTap();
+    wrap.classList.add("is-pinching");
+  }
+
+  function updatePinchGesture(points) {
+    if (!pinchGesture) return;
+
+    const distance = getGestureDistance(points);
+    if (distance < PINCH_MIN_DISTANCE) return;
+
+    const center = getGestureCenter(points);
+    setSheetScale(pinchGesture.startScale * (distance / pinchGesture.startDistance), { persist: false });
+    scrollSheetToAnchor(center, pinchGesture.anchorX, pinchGesture.anchorY);
+  }
+
+  function getGesturePoints() {
+    return Array.from(sheetPointers.values()).slice(0, 2);
+  }
+
+  function getTouchGesturePoints(event) {
+    return Array.from(event.touches)
+      .slice(0, 2)
+      .map((touch) => ({ x: touch.clientX, y: touch.clientY }));
+  }
+
+  function getGestureDistance(points) {
+    if (points.length < 2) return 0;
+    return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
+  }
+
+  function getGestureCenter(points) {
+    return {
+      x: (points[0].x + points[1].x) / 2,
+      y: (points[0].y + points[1].y) / 2,
+    };
   }
 
   function handleSheetPointerDown(event) {
@@ -747,16 +862,36 @@
     if (!grid || !stage) return;
 
     grid.style.setProperty("--sheet-scale", String(sheetScale));
-    requestAnimationFrame(() => {
-      const naturalWidth = grid.scrollWidth || grid.offsetWidth || 1;
-      const naturalHeight = grid.scrollHeight || grid.offsetHeight || 1;
-      stage.style.setProperty("--sheet-stage-width", `${Math.ceil(naturalWidth * sheetScale)}px`);
-      stage.style.setProperty("--sheet-stage-height", `${Math.ceil(naturalHeight * sheetScale)}px`);
-    });
+    updateSheetStageSize();
+    requestAnimationFrame(updateSheetStageSize);
+  }
+
+  function updateSheetStageSize() {
+    const grid = $("#sheetGrid");
+    const stage = $("#sheetStage");
+    if (!grid || !stage) return;
+
+    const naturalWidth = grid.scrollWidth || grid.offsetWidth || 1;
+    const naturalHeight = grid.scrollHeight || grid.offsetHeight || 1;
+    stage.style.setProperty("--sheet-stage-width", `${Math.ceil(naturalWidth * sheetScale)}px`);
+    stage.style.setProperty("--sheet-stage-height", `${Math.ceil(naturalHeight * sheetScale)}px`);
   }
 
   function adjustSheetZoom(delta) {
+    const wrap = $("#sheetWrap");
+    if (!wrap) {
+      setSheetScale(sheetScale + delta);
+      return;
+    }
+
+    const center = {
+      x: wrap.getBoundingClientRect().left + wrap.clientWidth / 2,
+      y: wrap.getBoundingClientRect().top + wrap.clientHeight / 2,
+    };
+    const anchorX = (wrap.scrollLeft + wrap.clientWidth / 2) / sheetScale;
+    const anchorY = (wrap.scrollTop + wrap.clientHeight / 2) / sheetScale;
     setSheetScale(sheetScale + delta);
+    scrollSheetToAnchor(center, anchorX, anchorY);
   }
 
   function fitSheetToWidth() {
@@ -769,13 +904,32 @@
     wrap.scrollLeft = 0;
   }
 
-  function setSheetScale(nextScale) {
+  function setSheetScale(nextScale, options = {}) {
+    const { persist = true } = options;
     sheetScale = clamp(Number(nextScale) || 1, MIN_SHEET_SCALE, MAX_SHEET_SCALE);
+    if (persist) persistSheetScale();
+    applySheetScale();
+    updateZoomControls();
+  }
+
+  function persistSheetScale() {
     try {
       localStorage.setItem(SHEET_ZOOM_KEY, String(sheetScale));
     } catch {}
-    applySheetScale();
-    updateZoomControls();
+  }
+
+  function scrollSheetToAnchor(center, anchorX, anchorY) {
+    const wrap = $("#sheetWrap");
+    if (!wrap) return;
+
+    const rect = wrap.getBoundingClientRect();
+    const nextLeft = anchorX * sheetScale - (center.x - rect.left);
+    const nextTop = anchorY * sheetScale - (center.y - rect.top);
+    const maxLeft = Math.max(0, wrap.scrollWidth - wrap.clientWidth);
+    const maxTop = Math.max(0, wrap.scrollHeight - wrap.clientHeight);
+
+    wrap.scrollLeft = clamp(nextLeft, 0, maxLeft);
+    wrap.scrollTop = clamp(nextTop, 0, maxTop);
   }
 
   function loadSheetScale() {

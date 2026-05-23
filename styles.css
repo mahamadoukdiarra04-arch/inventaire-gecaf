@@ -94,7 +94,9 @@ textarea {
 
 .login-view {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-height: 100vh;
+  min-height: 100dvh;
   place-items: center;
   padding: max(1rem, env(safe-area-inset-top)) 1rem max(1rem, env(safe-area-inset-bottom));
   background: var(--surface);
@@ -106,7 +108,8 @@ textarea {
 }
 
 .login-card {
-  width: min(440px, 100%);
+  width: 100%;
+  max-width: 440px;
   border: 1px solid var(--soft-line);
   border-radius: 8px;
   padding: 1rem;
@@ -672,11 +675,12 @@ button.sheet-cell {
   -webkit-overflow-scrolling: touch;
   background: var(--surface);
   cursor: grab;
-  touch-action: pan-x pan-y pinch-zoom;
+  touch-action: pan-x pan-y;
   user-select: none;
 }
 
-.sheet-wrap.is-dragging {
+.sheet-wrap.is-dragging,
+.sheet-wrap.is-pinching {
   cursor: grabbing;
 }
 
@@ -684,6 +688,7 @@ button.sheet-cell {
   position: relative;
   width: var(--sheet-stage-width, max-content);
   height: var(--sheet-stage-height, auto);
+  touch-action: pan-x pan-y;
 }
 
 .excel-sheet {
@@ -724,7 +729,7 @@ button.excel-cell {
   width: 100%;
   cursor: pointer;
   -webkit-tap-highlight-color: rgba(31, 78, 121, 0.12);
-  touch-action: pan-x pan-y pinch-zoom;
+  touch-action: pan-x pan-y;
 }
 
 .merged {
@@ -1063,7 +1068,9 @@ button.excel-cell {
   }
 
   .login-view {
-    align-items: end;
+    min-height: 100svh;
+    align-items: center;
+    justify-items: center;
     padding: calc(0.85rem + env(safe-area-inset-top)) 0.85rem calc(0.85rem + env(safe-area-inset-bottom));
   }
 
