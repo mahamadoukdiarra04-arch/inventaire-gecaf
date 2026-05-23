@@ -105,6 +105,7 @@
         team: "",
         teamKey: "",
         agent: "",
+        agentKey: "",
         isAdmin: false,
         connectedAt: "",
       },
@@ -141,6 +142,7 @@
       const fallback = defaultState();
       const session = { ...fallback.session, ...(parsed.session || {}) };
       session.teamKey = session.teamKey || normalizeTeam(session.team);
+      session.agentKey = session.agentKey || normalizeTeam(session.agent);
       session.connected = false;
       session.isAdmin = false;
       session.connectedAt = "";
@@ -204,6 +206,8 @@
       const data = Object.fromEntries(new FormData(event.currentTarget));
       const nextTeam = clean(data.team);
       const nextAgent = clean(data.agent);
+      const nextTeamKey = normalizeTeam(nextTeam);
+      const nextAgentKey = normalizeTeam(nextAgent);
       const isAdmin = isAdminCredentials(nextTeam, nextAgent);
 
       if (!nextTeam || !nextAgent) {
@@ -222,8 +226,11 @@
           return;
         }
 
-        const teamChanged = normalizeTeam(state.session.team) && normalizeTeam(state.session.team) !== normalizeTeam(nextTeam);
-        if (teamChanged) {
+        const previousTeamKey = state.session.teamKey || normalizeTeam(state.session.team);
+        const previousAgentKey = state.session.agentKey || normalizeTeam(state.session.agent);
+        const actorChanged =
+          (previousTeamKey || previousAgentKey) && (previousTeamKey !== nextTeamKey || previousAgentKey !== nextAgentKey);
+        if (actorChanged) {
           archiveCurrentSheet();
           state.sheetId = makeId("sheet");
           state.header = { date: new Date().toISOString().slice(0, 10), agency: "", supervisor: "", locked: false };
@@ -234,8 +241,9 @@
         state.session = {
           connected: true,
           team: nextTeam,
-          teamKey: normalizeTeam(nextTeam),
+          teamKey: nextTeamKey,
           agent: nextAgent,
+          agentKey: nextAgentKey,
           isAdmin,
           connectedAt: new Date().toISOString(),
         };
@@ -720,6 +728,8 @@
       sheetId: archive.id,
       teamKey: normalizeTeam(archive.session.team),
       teamName: archive.session.team,
+      agentKey: archive.session.agentKey || normalizeTeam(archive.session.agent),
+      agentName: archive.session.agent,
       archivedAt: archive.archivedAt,
       updatedBy: archive.session.agent,
     });
@@ -755,6 +765,7 @@
       ...archive.session,
       connected: true,
       teamKey: normalizeTeam(archive.session?.team),
+      agentKey: archive.session?.agentKey || normalizeTeam(archive.session?.agent),
       isAdmin: wasAdmin || Boolean(archive.session?.isAdmin),
     };
     state.header = { ...archive.header };
@@ -797,7 +808,13 @@
 
   function getTeamArchives() {
     const teamKey = normalizeTeam(state.session.team);
-    return state.archives.filter((archive) => normalizeTeam(archive.session?.team) === teamKey && (archive.status || "archived") === "archived");
+    const agentKey = getSessionAgentKey();
+    return state.archives.filter(
+      (archive) =>
+        normalizeTeam(archive.session?.team) === teamKey &&
+        getArchiveAgentKey(archive) === agentKey &&
+        (archive.status || "archived") === "archived",
+    );
   }
 
   function getVisibleArchives() {
@@ -1646,7 +1663,7 @@
     if (!drained) return false;
 
     const loaded = await loadRemoteActiveSheet({ skipIfLocalPending: true });
-    await pullRemoteArchivesForTeam(state.session.teamKey);
+    await pullRemoteArchivesForTeam(state.session.teamKey, getSessionAgentKey());
     startRealtime();
     state.syncStatus.remote = "synced";
     state.syncStatus.message = loaded === false ? "Local protege" : "Synchronise";
@@ -1734,7 +1751,7 @@
 
   function createSyncContext() {
     return {
-      activeSheetsByTeam: new Map(),
+      activeSheetsByOwner: new Map(),
       sheetIdMap: new Map(),
     };
   }
@@ -1766,6 +1783,14 @@
       attempts: Number(item.attempts || 0),
     };
     if (action.type === "upsertSheet") action.sheet = action.sheet || item.sheet || item;
+    if (action.type === "upsertSheet") {
+      action.sheet.agent_key = getSheetAgentKey(action.sheet);
+      action.sheet.agent_name = getSheetAgentName(action.sheet);
+    }
+    if (["upsertCell", "archiveSheet"].includes(action.type)) {
+      action.agentKey = getActionAgentKey(action);
+      action.agentName = getActionAgentName(action);
+    }
     return action;
   }
 
@@ -1840,13 +1865,15 @@
   }
 
   async function sendCellBatch(client, actions, context) {
-    const groups = groupBy(actions, (action) => [action.sheetId, action.teamKey].join(":"));
+    const groups = groupBy(actions, (action) => [action.sheetId, action.teamKey, getActionAgentKey(action)].join(":"));
     for (const groupActions of Object.values(groups)) {
       const first = groupActions[0];
       const sheet = await sendUpsertSheet(client, {
         id: first.sheetId,
         team_key: first.teamKey,
         team_name: first.teamName || state.session.team,
+        agent_key: getActionAgentKey(first),
+        agent_name: getActionAgentName(first),
         status: "active",
         archived_at: null,
         created_by: first.updatedBy,
@@ -1926,6 +1953,8 @@
         id: archiveSheetId,
         team_key: action.teamKey,
         team_name: action.teamName || state.session.team,
+        agent_key: getActionAgentKey(action),
+        agent_name: getActionAgentName(action),
         status: "archived",
         archived_at: action.archivedAt,
         created_by: action.updatedBy,
@@ -1951,6 +1980,8 @@
         id: action.sheetId,
         team_key: action.teamKey,
         team_name: action.teamName || state.session.team,
+        agent_key: getActionAgentKey(action),
+        agent_name: getActionAgentName(action),
         status: "active",
         archived_at: null,
         created_by: action.updatedBy,
@@ -1971,10 +2002,14 @@
 
   async function sendUpsertSheet(client, sheet, context = createSyncContext()) {
     if (!sheet?.id) return null;
+    const agentName = getSheetAgentName(sheet);
+    const agentKey = getSheetAgentKey({ ...sheet, agent_name: agentName });
     const sheetPayload = {
       id: getMappedSheetId(context, sheet.id) || sheet.id,
       team_key: sheet.team_key,
       team_name: sheet.team_name,
+      agent_key: agentKey,
+      agent_name: agentName,
       status: sheet.status,
       archived_at: sheet.archived_at || null,
       created_by: sheet.created_by,
@@ -1983,7 +2018,7 @@
     };
 
     if (sheetPayload.status === "active") {
-      const activeSheet = await findRemoteActiveSheet(client, sheetPayload.team_key, context);
+      const activeSheet = await findRemoteActiveSheet(client, sheetPayload.team_key, sheetPayload.agent_key, context);
       if (activeSheet && activeSheet.id !== sheetPayload.id) {
         rememberSheetMapping(context, sheet.id, activeSheet.id);
         return activeSheet;
@@ -1992,7 +2027,8 @@
 
     const result = await client.from("inventory_sheets").upsert(sheetPayload, { onConflict: "id" });
     if (result.error) {
-      const activeSheet = sheetPayload.status === "active" ? await findRemoteActiveSheet(client, sheetPayload.team_key, context, true) : null;
+      const activeSheet =
+        sheetPayload.status === "active" ? await findRemoteActiveSheet(client, sheetPayload.team_key, sheetPayload.agent_key, context, true) : null;
       if (activeSheet) {
         rememberSheetMapping(context, sheet.id, activeSheet.id);
         return activeSheet;
@@ -2001,7 +2037,7 @@
     }
 
     if (sheetPayload.status === "active") {
-      context.activeSheetsByTeam.set(sheetPayload.team_key, { ...sheetPayload });
+      context.activeSheetsByOwner.set(getOwnerMapKey(sheetPayload.team_key, sheetPayload.agent_key), { ...sheetPayload });
     }
     return sheetPayload;
   }
@@ -2012,7 +2048,7 @@
     if (error) throw error;
     if (data?.[0]?.id) return data[0].id;
 
-    const activeSheet = await findRemoteActiveSheet(client, action.teamKey, context, true);
+    const activeSheet = await findRemoteActiveSheet(client, action.teamKey, getActionAgentKey(action), context, true);
     if (activeSheet?.id) {
       rememberSheetMapping(context, action.sheetId, activeSheet.id);
       return activeSheet.id;
@@ -2020,19 +2056,21 @@
     return sheetId;
   }
 
-  async function findRemoteActiveSheet(client, teamKey, context, refresh = false) {
-    if (!teamKey) return null;
-    if (!refresh && context.activeSheetsByTeam.has(teamKey)) return context.activeSheetsByTeam.get(teamKey);
+  async function findRemoteActiveSheet(client, teamKey, agentKey, context, refresh = false) {
+    if (!teamKey || !agentKey) return null;
+    const ownerKey = getOwnerMapKey(teamKey, agentKey);
+    if (!refresh && context.activeSheetsByOwner.has(ownerKey)) return context.activeSheetsByOwner.get(ownerKey);
     const { data, error } = await client
       .from("inventory_sheets")
-      .select("id,team_key,team_name,status,archived_at,created_by,updated_by,updated_at")
+      .select("id,team_key,team_name,agent_key,agent_name,status,archived_at,created_by,updated_by,updated_at")
       .eq("team_key", teamKey)
+      .eq("agent_key", agentKey)
       .eq("status", "active")
       .order("updated_at", { ascending: false })
       .limit(1);
     if (error) throw error;
     const sheet = data?.[0] || null;
-    if (sheet) context.activeSheetsByTeam.set(teamKey, sheet);
+    if (sheet) context.activeSheetsByOwner.set(ownerKey, sheet);
     return sheet;
   }
 
@@ -2069,7 +2107,8 @@
     const client = getSupabaseClient();
     if (!client || isAdminSession()) return;
     const teamKey = state.session.teamKey || normalizeTeam(state.session.team);
-    if (skipIfLocalPending && hasLocalPendingWork(teamKey)) {
+    const agentKey = getSessionAgentKey();
+    if (skipIfLocalPending && hasLocalPendingWork(teamKey, agentKey)) {
       state.syncStatus.remote = "pending";
       state.syncStatus.message = "Local protege";
       saveState();
@@ -2079,6 +2118,7 @@
       .from("inventory_sheets")
       .select("*")
       .eq("team_key", teamKey)
+      .eq("agent_key", agentKey)
       .eq("status", "active")
       .order("updated_at", { ascending: false })
       .limit(1);
@@ -2096,14 +2136,15 @@
     return true;
   }
 
-  async function pullRemoteArchivesForTeam(teamKey) {
+  async function pullRemoteArchivesForTeam(teamKey, agentKey = getSessionAgentKey()) {
     const client = getSupabaseClient();
-    if (!client || !teamKey) return;
+    if (!client || !teamKey || !agentKey) return;
     const sheets = await fetchAllRemoteRows(() =>
       client
         .from("inventory_sheets")
         .select("*")
         .eq("team_key", teamKey)
+        .eq("agent_key", agentKey)
         .eq("status", "archived")
         .order("archived_at", { ascending: false }),
     );
@@ -2211,6 +2252,8 @@
     state.sheetId = sheet.id;
     state.session.team = sheet.team_name || state.session.team;
     state.session.teamKey = sheet.team_key || state.session.teamKey;
+    state.session.agent = sheet.agent_name || state.session.agent;
+    state.session.agentKey = sheet.agent_key || state.session.agentKey || normalizeTeam(state.session.agent);
     state.header = { date: "", agency: "", supervisor: "", locked: false };
     state.rows = [];
     cells.forEach(applyRemoteCell);
@@ -2236,11 +2279,15 @@
     }
   }
 
-  function hasLocalPendingWork(teamKey = state.session.teamKey || normalizeTeam(state.session.team)) {
+  function hasLocalPendingWork(teamKey = state.session.teamKey || normalizeTeam(state.session.team), agentKey = getSessionAgentKey()) {
     compactSyncQueue();
     return state.syncQueue.some((action) => {
       if (action.teamKey && action.teamKey !== teamKey) return false;
       if (action.sheet?.team_key && action.sheet.team_key !== teamKey) return false;
+      const actionAgentKey = getActionAgentKey(action);
+      const sheetAgentKey = action.sheet ? getSheetAgentKey(action.sheet) : "";
+      if (actionAgentKey && actionAgentKey !== agentKey) return false;
+      if (sheetAgentKey && sheetAgentKey !== agentKey) return false;
       return ["upsertSheet", "archiveSheet", "upsertCell"].includes(action.type);
     });
   }
@@ -2260,6 +2307,7 @@
     const client = getSupabaseClient();
     if (!client || !state.sheetId || isAdminSession()) return;
     const teamKey = state.session.teamKey || normalizeTeam(state.session.team);
+    const agentKey = getSessionAgentKey();
     sheetChannel = client
       .channel(`inventory:${state.sheetId}`)
       .on(
@@ -2277,8 +2325,9 @@
         "postgres_changes",
         { event: "*", schema: "public", table: "inventory_sheets", filter: `team_key=eq.${teamKey}` },
         (payload) => {
+          if (payload.new?.agent_key !== agentKey) return;
           if (payload.new?.status === "active" && payload.new.id !== state.sheetId) loadRemoteActiveSheet().catch(() => {});
-          if (payload.new?.status === "archived") pullRemoteArchivesForTeam(teamKey).catch(() => {});
+          if (payload.new?.status === "archived") pullRemoteArchivesForTeam(teamKey, agentKey).catch(() => {});
         },
       )
       .subscribe();
@@ -2289,12 +2338,19 @@
     sheetChannel = null;
   }
 
-  function currentSheetPayload(status = "active", sheetId = state.sheetId, teamKey = state.session.teamKey || normalizeTeam(state.session.team)) {
+  function currentSheetPayload(
+    status = "active",
+    sheetId = state.sheetId,
+    teamKey = state.session.teamKey || normalizeTeam(state.session.team),
+    agentKey = getSessionAgentKey(),
+  ) {
     const now = new Date().toISOString();
     return {
       id: sheetId || makeId("sheet"),
       team_key: teamKey,
       team_name: state.session.team,
+      agent_key: agentKey,
+      agent_name: getSessionAgentName(),
       status,
       archived_at: status === "archived" ? now : null,
       created_by: state.session.agent,
@@ -2311,6 +2367,8 @@
       sheetId: state.sheetId,
       teamKey: state.session.teamKey || normalizeTeam(state.session.team),
       teamName: state.session.team,
+      agentKey: getSessionAgentKey(),
+      agentName: getSessionAgentName(),
       rowOrder: Number(rowOrder),
       fieldKey,
       value: clean(value),
@@ -2362,7 +2420,8 @@
         connected: true,
         team: sheet.team_name,
         teamKey: sheet.team_key,
-        agent: sheet.updated_by || sheet.created_by || "",
+        agent: sheet.agent_name || sheet.updated_by || sheet.created_by || "",
+        agentKey: sheet.agent_key || normalizeTeam(sheet.agent_name || sheet.updated_by || sheet.created_by || ""),
         isAdmin: false,
         connectedAt: sheet.updated_at || "",
       },
@@ -2392,7 +2451,8 @@
         connected: true,
         team: sheet.team_name || existing?.session?.team || "",
         teamKey: sheet.team_key || existing?.session?.teamKey || "",
-        agent: sheet.updated_by || sheet.created_by || existing?.session?.agent || "",
+        agent: sheet.agent_name || sheet.updated_by || sheet.created_by || existing?.session?.agent || "",
+        agentKey: sheet.agent_key || existing?.session?.agentKey || normalizeTeam(sheet.agent_name || sheet.updated_by || sheet.created_by || existing?.session?.agent || ""),
         isAdmin: false,
         connectedAt: sheet.updated_at || existing?.session?.connectedAt || "",
       },
@@ -2459,6 +2519,42 @@
 
   function isAdminSession() {
     return Boolean(state.session?.connected && (state.session?.isAdmin || isAdminCredentials(state.session?.team, state.session?.agent)));
+  }
+
+  function getSessionAgentKey(session = state.session) {
+    return clean(session?.agentKey || session?.agent_key) || normalizeTeam(session?.agent || session?.agentName || session?.agent_name);
+  }
+
+  function getSessionAgentName(session = state.session) {
+    return clean(session?.agent || session?.agentName || session?.agent_name) || "Agent";
+  }
+
+  function getOwnerMapKey(teamKey, agentKey) {
+    return [teamKey || "", agentKey || ""].join(":");
+  }
+
+  function getSheetAgentKey(sheet) {
+    return clean(sheet?.agent_key || sheet?.agentKey) || normalizeTeam(getSheetAgentName(sheet));
+  }
+
+  function getSheetAgentName(sheet) {
+    return clean(sheet?.agent_name || sheet?.agentName || sheet?.updated_by || sheet?.updatedBy || sheet?.created_by || sheet?.createdBy) || getSessionAgentName();
+  }
+
+  function getActionAgentKey(action) {
+    return clean(action?.agentKey || action?.agent_key || action?.sheet?.agent_key || action?.sheet?.agentKey) || normalizeTeam(getActionAgentName(action));
+  }
+
+  function getActionAgentName(action) {
+    return (
+      clean(action?.agentName || action?.agent_name || action?.sheet?.agent_name || action?.sheet?.agentName) ||
+      clean(action?.updatedBy || action?.updated_by || action?.sheet?.updated_by || action?.sheet?.created_by) ||
+      getSessionAgentName()
+    );
+  }
+
+  function getArchiveAgentKey(archive) {
+    return getSessionAgentKey(archive?.session);
   }
 
   function isAllowedUser(teamName, agentName) {
@@ -2564,7 +2660,7 @@
     return compactArchivesForStorage(archives, syncQueue).map((archive) => ({
       ...archive,
       header: { date: "", agency: "", supervisor: "", locked: false, ...(archive.header || {}) },
-      session: { connected: true, team: "", teamKey: "", agent: "", isAdmin: false, connectedAt: "", ...(archive.session || {}) },
+      session: { connected: true, team: "", teamKey: "", agent: "", agentKey: "", isAdmin: false, connectedAt: "", ...(archive.session || {}) },
       rows: Array.isArray(archive.rows) ? archive.rows : [],
       hasDetails: archive.hasDetails !== false && Array.isArray(archive.rows) && archive.rows.length > 0,
       filledRows: Number.isFinite(archive.filledRows) ? archive.filledRows : (archive.rows?.length ? getArchiveFilledRows(archive) : null),
@@ -2608,6 +2704,7 @@
         const fallback = defaultState();
         const storedSession = { ...fallback.session, ...(stored.value?.session || {}) };
         storedSession.teamKey = storedSession.teamKey || normalizeTeam(storedSession.team);
+        storedSession.agentKey = storedSession.agentKey || normalizeTeam(storedSession.agent);
         storedSession.connected = false;
         storedSession.isAdmin = false;
         storedSession.connectedAt = "";
@@ -2747,7 +2844,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=21").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=23").catch(() => {});
     }
   }
 })();

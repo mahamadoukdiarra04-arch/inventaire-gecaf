@@ -24,6 +24,8 @@ create table if not exists public.inventory_sheets (
   id text primary key,
   team_key text not null,
   team_name text not null,
+  agent_key text not null default '',
+  agent_name text not null default '',
   status text not null default 'active' check (status in ('active', 'archived')),
   archived_at timestamptz,
   created_by text,
@@ -32,8 +34,10 @@ create table if not exists public.inventory_sheets (
   updated_at timestamptz not null default now()
 );
 
-create unique index if not exists inventory_one_active_sheet_per_team
-  on public.inventory_sheets(team_key)
+drop index if exists inventory_one_active_sheet_per_team;
+
+create unique index if not exists inventory_one_active_sheet_per_agent
+  on public.inventory_sheets(team_key, agent_key)
   where status = 'active';
 
 create table if not exists public.inventory_cells (
@@ -48,6 +52,9 @@ create table if not exists public.inventory_cells (
 
 create index if not exists inventory_sheets_team_status_idx
   on public.inventory_sheets(team_key, status, updated_at desc);
+
+create index if not exists inventory_sheets_agent_status_idx
+  on public.inventory_sheets(team_key, agent_key, status, updated_at desc);
 
 create index if not exists inventory_cells_sheet_idx
   on public.inventory_cells(sheet_id, row_order);
