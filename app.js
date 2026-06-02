@@ -16,6 +16,7 @@
   const SYNC_RETRY_BASE_MS = 4000;
   const SYNC_RETRY_MAX_MS = 60000;
   const LOCAL_ARCHIVE_SUMMARY_LIMIT = 500;
+  const LOCAL_ARCHIVE_DETAIL_LIMIT = 30;
   const SHEET_ZOOM_KEY = STORAGE_KEY + ":sheetZoom";
   const MIN_SHEET_SCALE = 0.16;
   const MAX_SHEET_SCALE = 2.25;
@@ -815,17 +816,66 @@
       session: { ...state.session },
       header: { ...state.header },
       rows: state.rows.map((row) => ({ ...row })),
+      hasDetails: true,
+      filledRows: state.rows.filter(rowHasContent).length,
     };
 
     state.archives = [archive, ...state.archives.filter((item) => item.id !== archive.id)];
+    queueArchiveSnapshotSync(archive);
+  }
+
+  function queueArchiveSnapshotSync(archive) {
+    const sheetId = archive.id;
+    const archivedAt = archive.archivedAt || new Date().toISOString();
+    const teamKey = normalizeTeam(archive.session.team);
+    const teamName = archive.session.team;
+    const agentKey = archive.session.agentKey || normalizeTeam(archive.session.agent);
+    const agentName = archive.session.agent;
+
     queueSync("archiveSheet", {
-      sheetId: archive.id,
-      teamKey: normalizeTeam(archive.session.team),
-      teamName: archive.session.team,
-      agentKey: archive.session.agentKey || normalizeTeam(archive.session.agent),
-      agentName: archive.session.agent,
-      archivedAt: archive.archivedAt,
-      updatedBy: archive.session.agent,
+      sheetId,
+      teamKey,
+      teamName,
+      agentKey,
+      agentName,
+      archivedAt,
+      updatedBy: agentName,
+    });
+
+    headerFields.forEach((field) => {
+      queueCellSnapshotChange({
+        sheetId,
+        teamKey,
+        teamName,
+        agentKey,
+        agentName,
+        rowOrder: 0,
+        fieldKey: field.key,
+        value: archive.header?.[field.key] || "",
+        updatedAt: archivedAt,
+        updatedBy: agentName,
+        sheetStatus: "archived",
+        archivedAt,
+      });
+    });
+
+    (archive.rows || []).filter(rowHasContent).forEach((row) => {
+      columns.slice(1).forEach((column) => {
+        queueCellSnapshotChange({
+          sheetId,
+          teamKey,
+          teamName,
+          agentKey,
+          agentName,
+          rowOrder: row.order,
+          fieldKey: column.key,
+          value: row[column.key] || "",
+          updatedAt: archivedAt,
+          updatedBy: agentName,
+          sheetStatus: "archived",
+          archivedAt,
+        });
+      });
     });
   }
 
@@ -2033,17 +2083,19 @@
   }
 
   async function sendCellBatch(client, actions, context) {
-    const groups = groupBy(actions, (action) => [action.sheetId, action.teamKey, getActionAgentKey(action)].join(":"));
+    const groups = groupBy(actions, (action) => [action.sheetId, action.teamKey, getActionAgentKey(action), getActionSheetStatus(action)].join(":"));
     for (const groupActions of Object.values(groups)) {
       const first = groupActions[0];
+      const sheetStatus = getActionSheetStatus(first);
+      const archivedAt = sheetStatus === "archived" ? getActionArchivedAt(first) || maxIso(groupActions.map((action) => action.updatedAt)) : null;
       const sheet = await sendUpsertSheet(client, {
         id: first.sheetId,
         team_key: first.teamKey,
         team_name: first.teamName || state.session.team,
         agent_key: getActionAgentKey(first),
         agent_name: getActionAgentName(first),
-        status: "active",
-        archived_at: null,
+        status: sheetStatus,
+        archived_at: archivedAt,
         created_by: first.updatedBy,
         updated_by: first.updatedBy,
         updated_at: maxIso(groupActions.map((action) => action.updatedAt)),
@@ -2149,14 +2201,15 @@
     }
 
     if (action.type === "upsertCell") {
+      const sheetStatus = getActionSheetStatus(action);
       const sheet = await sendUpsertSheet(client, {
         id: action.sheetId,
         team_key: action.teamKey,
         team_name: action.teamName || state.session.team,
         agent_key: getActionAgentKey(action),
         agent_name: getActionAgentName(action),
-        status: "active",
-        archived_at: null,
+        status: sheetStatus,
+        archived_at: sheetStatus === "archived" ? getActionArchivedAt(action) || action.updatedAt : null,
         created_by: action.updatedBy,
         updated_by: action.updatedBy,
         updated_at: action.updatedAt,
@@ -2615,6 +2668,8 @@
 
   function queueCellChange(rowOrder, fieldKey, value) {
     if (applyingRemote || !state.session.connected || isAdminSession()) return;
+    const sheetStatus = getCurrentSheetStatus();
+    const archivedAt = sheetStatus === "archived" ? getCurrentSheetArchivedAt() : "";
     const action = {
       actionId: makeId("op"),
       type: "upsertCell",
@@ -2628,8 +2683,21 @@
       value: clean(value),
       updatedAt: new Date().toISOString(),
       updatedBy: state.session.agent,
+      sheetStatus,
+      archivedAt,
     };
     queueSync(action.type, action);
+  }
+
+  function queueCellSnapshotChange(payload) {
+    queueSync("upsertCell", {
+      actionId: makeId("op"),
+      type: "upsertCell",
+      ...payload,
+      value: clean(payload.value),
+      updatedAt: payload.updatedAt || new Date().toISOString(),
+      updatedBy: payload.updatedBy || state.session.agent,
+    });
   }
 
   function queueSync(type, payload) {
@@ -2810,6 +2878,23 @@
     );
   }
 
+  function getActionSheetStatus(action) {
+    return clean(action?.sheetStatus || action?.sheet_status || action?.sheet?.status || action?.status) === "archived" ? "archived" : "active";
+  }
+
+  function getActionArchivedAt(action) {
+    return clean(action?.archivedAt || action?.archived_at || action?.sheet?.archived_at || action?.sheet?.archivedAt);
+  }
+
+  function getCurrentSheetStatus() {
+    return state.archives.some((archive) => archive.id === state.sheetId && (archive.status || "archived") === "archived") ? "archived" : "active";
+  }
+
+  function getCurrentSheetArchivedAt() {
+    const archive = state.archives.find((item) => item.id === state.sheetId && (item.status || "archived") === "archived");
+    return archive?.archivedAt || "";
+  }
+
   function getArchiveAgentKey(archive) {
     return getSessionAgentKey(archive?.session);
   }
@@ -2970,9 +3055,9 @@
       .slice()
       .sort(sortArchives)
       .slice(0, LOCAL_ARCHIVE_SUMMARY_LIMIT)
-      .map((archive) => {
+      .map((archive, index) => {
         const rows = Array.isArray(archive.rows) ? archive.rows : [];
-        const keepDetails = archiveHasPendingSync(archive.id, syncQueue);
+        const keepDetails = archiveHasPendingSync(archive.id, syncQueue) || (index < LOCAL_ARCHIVE_DETAIL_LIMIT && rows.length > 0);
         return {
           ...archive,
           header: { date: "", agency: "", supervisor: "", locked: false, ...(archive.header || {}) },
@@ -3146,7 +3231,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=25").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=26").catch(() => {});
     }
   }
 })();
