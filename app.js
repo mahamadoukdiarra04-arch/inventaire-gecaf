@@ -122,6 +122,7 @@
       teams: [],
       users: [],
       syncQueue: [],
+      viewingArchiveId: "",
       syncStatus: {
         online: navigator.onLine,
         remote: "local",
@@ -232,8 +233,9 @@
         const actorChanged =
           (previousTeamKey || previousAgentKey) && (previousTeamKey !== nextTeamKey || previousAgentKey !== nextAgentKey);
         if (actorChanged) {
-          archiveCurrentSheet();
+          if (!state.viewingArchiveId) archiveCurrentSheet();
           state.sheetId = makeId("sheet");
+          state.viewingArchiveId = "";
           state.header = { date: new Date().toISOString().slice(0, 10), agency: "", supervisor: "", locked: false };
           state.rows = [];
           active = { type: "row", order: 1, colIndex: 1 };
@@ -288,7 +290,7 @@
 
     $("#newSheetButton").addEventListener("click", () => {
       flushOpenEditor();
-      archiveCurrentSheet();
+      if (!state.viewingArchiveId) archiveCurrentSheet();
       createBlankCurrentSheet();
       active = { type: "header", key: "date" };
       pendingCellEdit = false;
@@ -881,6 +883,7 @@
 
   function createBlankCurrentSheet() {
     state.sheetId = makeId("sheet");
+    state.viewingArchiveId = "";
     state.header = { date: new Date().toISOString().slice(0, 10), agency: "", supervisor: "", locked: false };
     state.rows = [];
     queueSync("upsertSheet", currentSheetPayload("active"));
@@ -902,8 +905,10 @@
     const archive = await ensureArchiveDetails(getVisibleArchives().find((item) => item.id === id));
     if (!archive) return;
     const wasAdmin = isAdminSession();
-    if (!wasAdmin) archiveCurrentSheet();
+    if (!wasAdmin && !state.viewingArchiveId) archiveCurrentSheet();
+    stopRealtime();
     state.sheetId = archive.id;
+    state.viewingArchiveId = archive.id;
     state.session = {
       ...state.session,
       ...archive.session,
@@ -1878,6 +1883,15 @@
     const drained = await syncNow({ force });
     if (!drained) return false;
 
+    if (state.viewingArchiveId) {
+      await pullRemoteArchivesForTeam(state.session.teamKey, getSessionAgentKey());
+      state.syncStatus.remote = "synced";
+      state.syncStatus.message = "Archive synchronisee";
+      state.syncStatus.lastSyncAt = new Date().toISOString();
+      saveState();
+      return true;
+    }
+
     const loaded = await loadRemoteActiveSheet({ skipIfLocalPending: true });
     await pullRemoteArchivesForTeam(state.session.teamKey, getSessionAgentKey());
     startRealtime();
@@ -2491,6 +2505,7 @@
 
     applyingRemote = true;
     state.sheetId = sheet.id;
+    state.viewingArchiveId = "";
     state.session.team = sheet.team_name || state.session.team;
     state.session.teamKey = sheet.team_key || state.session.teamKey;
     state.session.agent = sheet.agent_name || state.session.agent;
@@ -2612,7 +2627,7 @@
   function startRealtime() {
     stopRealtime();
     const client = getSupabaseClient();
-    if (!client || !state.sheetId || isAdminSession()) return;
+    if (!client || !state.sheetId || isAdminSession() || state.viewingArchiveId) return;
     const teamKey = state.session.teamKey || normalizeTeam(state.session.team);
     const agentKey = getSessionAgentKey();
     sheetChannel = client
@@ -2887,7 +2902,9 @@
   }
 
   function getCurrentSheetStatus() {
-    return state.archives.some((archive) => archive.id === state.sheetId && (archive.status || "archived") === "archived") ? "archived" : "active";
+    return state.viewingArchiveId === state.sheetId || state.archives.some((archive) => archive.id === state.sheetId && (archive.status || "archived") === "archived")
+      ? "archived"
+      : "active";
   }
 
   function getCurrentSheetArchivedAt() {
@@ -3231,7 +3248,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=26").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=27").catch(() => {});
     }
   }
 })();
