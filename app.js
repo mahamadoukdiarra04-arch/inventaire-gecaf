@@ -593,6 +593,7 @@
 
   function bindAdmin() {
     $$("[data-close-admin]").forEach((node) => node.addEventListener("click", closeAdminPanel));
+    $("#adminSearch").addEventListener("input", renderAdminPanel);
 
     $("#teamForm").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -620,11 +621,20 @@
       syncNow({ force: true }).catch(() => {});
     });
 
+    $("#adminTeamsList").addEventListener("click", handleAdminTeamsClick);
+    $("#adminUsersList").addEventListener("click", handleAdminUsersClick);
+
     $("#adminArchivesList").addEventListener("click", (event) => {
-      const button = event.target.closest("[data-archive-id]");
-      if (!button || !isAdminSession()) return;
+      if (!isAdminSession()) return;
+      const deleteButton = event.target.closest("[data-admin-delete-archive]");
+      if (deleteButton) {
+        deleteArchiveSheet(deleteButton.dataset.adminDeleteArchive);
+        return;
+      }
+      const button = event.target.closest("[data-admin-open-archive]");
+      if (!button) return;
       closeAdminPanel();
-      loadArchive(button.dataset.archiveId).catch(() => {
+      loadArchive(button.dataset.adminOpenArchive).catch(() => {
         alert("Impossible de charger cette archive pour le moment.");
       });
     });
@@ -675,37 +685,121 @@
     $("#adminPanel").setAttribute("aria-hidden", "true");
   }
 
+  function getAdminSearchTerm() {
+    return normalizeTeam($("#adminSearch")?.value || "");
+  }
+
+  function matchesAdminSearch(values, searchTerm) {
+    if (!searchTerm) return true;
+    return values.some((value) => normalizeTeam(value).includes(searchTerm));
+  }
+
+  function handleAdminTeamsClick(event) {
+    const button = event.target.closest("[data-admin-team-action]");
+    if (!button || !isAdminSession()) return;
+    const teamKey = button.dataset.teamKey;
+    const team = state.teams.find((item) => item.teamKey === teamKey);
+    if (!team) return;
+
+    const nextActive = button.dataset.adminTeamAction === "restore";
+    if (!nextActive) {
+      const usersCount = state.users.filter((user) => user.teamKey === teamKey && user.active !== false).length;
+      const message = `Supprimer ${team.teamName} ? L'equipe sera desactivee avec ${usersCount} utilisateur(s).`;
+      if (!window.confirm(message)) return;
+    }
+
+    const updatedTeam = setLocalTeamActive(teamKey, nextActive);
+    const updatedUsers = nextActive ? [] : setLocalUsersActiveByTeam(teamKey, false);
+    if (updatedTeam) queueSync("upsertTeam", updatedTeam);
+    updatedUsers.forEach((user) => queueSync("upsertUser", user));
+    saveState();
+    renderAdminPanel();
+    syncNow({ force: true }).catch(() => {});
+  }
+
+  function handleAdminUsersClick(event) {
+    const button = event.target.closest("[data-admin-user-action]");
+    if (!button || !isAdminSession()) return;
+    const teamKey = button.dataset.teamKey;
+    const agentKey = button.dataset.agentKey;
+    const user = state.users.find((item) => item.teamKey === teamKey && item.agentKey === agentKey);
+    if (!user) return;
+
+    const nextActive = button.dataset.adminUserAction === "restore";
+    if (!nextActive && !window.confirm(`Supprimer ${user.agentName} de ${user.teamName} ?`)) return;
+
+    const updatedUser = setLocalUserActive(teamKey, agentKey, nextActive);
+    if (updatedUser) queueSync("upsertUser", updatedUser);
+    saveState();
+    renderAdminPanel();
+    syncNow({ force: true }).catch(() => {});
+  }
+
+  function deleteArchiveSheet(sheetId) {
+    const archive = state.archives.find((item) => item.id === sheetId);
+    if (!archive || !isAdminSession()) return;
+    const title = getArchiveTitle(archive) || "cette fiche";
+    if (!window.confirm(`Supprimer ${title} ? Les lignes associees seront aussi supprimees du serveur.`)) return;
+
+    state.archives = state.archives.filter((item) => item.id !== sheetId);
+    state.syncQueue = state.syncQueue.filter((item) => item.sheetId !== sheetId && item.sheet?.id !== sheetId);
+    queueSync("deleteSheet", {
+      sheetId,
+      updatedAt: new Date().toISOString(),
+      updatedBy: state.session.agent || ADMIN_AGENT,
+    });
+    if (state.sheetId === sheetId) {
+      state.sheetId = makeId("sheet");
+      state.header = { date: new Date().toISOString().slice(0, 10), agency: "", supervisor: "", locked: false };
+      state.rows = [];
+      active = { type: "row", order: 1, colIndex: 1 };
+    }
+    saveState();
+    renderAdminPanel();
+    syncNow({ force: true }).catch(() => {});
+  }
+
   function renderAdminPanel() {
     if (!$("#adminPanel")) return;
-    $("#adminTeamsList").innerHTML = state.teams.length
-      ? state.teams
-          .map(
-            (team) => `
-              <div class="admin-list-item">
-                <strong>${escapeHtml(team.teamName)}</strong>
-                <span>${escapeHtml(team.teamKey)}</span>
-              </div>
-            `,
-          )
-          .join("")
-      : `<div class="archive-empty">Aucune equipe enregistree.</div>`;
-
-    $("#adminUsersList").innerHTML = state.users.length
-      ? state.users
-          .map(
-            (user) => `
-              <div class="admin-list-item">
-                <strong>${escapeHtml(user.agentName)}</strong>
-                <span>${escapeHtml(user.teamName)} - ${user.active ? "actif" : "desactive"}</span>
-              </div>
-            `,
-          )
-          .join("")
-      : `<div class="archive-empty">Aucun utilisateur enregistre.</div>`;
-
+    const searchTerm = getAdminSearchTerm();
     const archives = getVisibleArchives();
-    $("#adminArchivesList").innerHTML = archives.length
-      ? archives.map(renderArchiveButton).join("")
+    const activeTeams = state.teams.filter((team) => team.active !== false);
+    const activeUsers = state.users.filter((user) => user.active !== false);
+    const filteredTeams = state.teams.filter((team) => matchesAdminSearch([team.teamName, team.teamKey, team.active === false ? "desactive" : "actif"], searchTerm));
+    const filteredUsers = state.users.filter((user) =>
+      matchesAdminSearch([user.agentName, user.agentKey, user.teamName, user.teamKey, user.active === false ? "desactive" : "actif"], searchTerm),
+    );
+    const filteredArchives = archives.filter((archive) =>
+      matchesAdminSearch(
+        [
+          getArchiveTitle(archive),
+          archive.session?.team,
+          archive.session?.agent,
+          archive.header?.agency,
+          archive.status === "active" ? "active" : "archive",
+          formatDateTime(archive.archivedAt),
+        ],
+        searchTerm,
+      ),
+    );
+
+    $("#adminTeamCount").textContent = String(activeTeams.length);
+    $("#adminUserCount").textContent = String(activeUsers.length);
+    $("#adminArchiveCount").textContent = String(archives.length);
+    $("#adminTeamsMeta").textContent = `${filteredTeams.length} / ${state.teams.length}`;
+    $("#adminUsersMeta").textContent = `${filteredUsers.length} / ${state.users.length}`;
+    $("#adminArchivesMeta").textContent = `${filteredArchives.length} / ${archives.length}`;
+
+    $("#adminTeamsList").innerHTML = filteredTeams.length
+      ? filteredTeams.map(renderAdminTeamItem).join("")
+      : `<div class="archive-empty">Aucune equipe trouvee.</div>`;
+
+    $("#adminUsersList").innerHTML = filteredUsers.length
+      ? filteredUsers.map(renderAdminUserItem).join("")
+      : `<div class="archive-empty">Aucun utilisateur trouve.</div>`;
+
+    $("#adminArchivesList").innerHTML = filteredArchives.length
+      ? filteredArchives.map(renderAdminArchiveItem).join("")
       : `<div class="archive-empty">Aucune fiche disponible.</div>`;
   }
 
@@ -821,11 +915,16 @@
     return isAdminSession() ? state.archives : getTeamArchives();
   }
 
-  function renderArchiveButton(archive) {
-    const filledRows = getArchiveFilledRows(archive);
-    const title = [archive.session?.team, formatHeaderValue("date", archive.header.date), archive.header.agency, archive.session?.agent]
+  function getArchiveTitle(archive) {
+    return [archive.session?.team, formatHeaderValue("date", archive.header?.date), archive.header?.agency, archive.session?.agent]
+      .map(clean)
       .filter(Boolean)
       .join(" - ");
+  }
+
+  function renderArchiveButton(archive) {
+    const filledRows = getArchiveFilledRows(archive);
+    const title = getArchiveTitle(archive);
     const isActiveSheet = archive.status === "active";
     const dateLabel = isActiveSheet ? "fiche active - mise a jour le" : "archivee le";
     const rowLabel = Number.isFinite(filledRows) ? `${filledRows} ligne(s)` : "detail serveur";
@@ -834,6 +933,73 @@
         <strong>${escapeHtml(title || (isActiveSheet ? "Fiche active" : "Fiche archivee"))}</strong>
         <span>${rowLabel} - ${dateLabel} ${escapeHtml(formatDateTime(archive.archivedAt))}</span>
       </button>
+    `;
+  }
+
+  function renderAdminTeamItem(team) {
+    const usersCount = state.users.filter((user) => user.teamKey === team.teamKey && user.active !== false).length;
+    const sheetsCount = state.archives.filter((archive) => normalizeTeam(archive.session?.team) === team.teamKey).length;
+    const isInactive = team.active === false;
+    const action = isInactive ? "restore" : "delete";
+    const actionLabel = isInactive ? "Reactiver" : "Supprimer";
+    const buttonClass = isInactive ? "ghost-button" : "danger-button";
+    return `
+      <div class="admin-list-item admin-manage-item ${isInactive ? "is-muted" : ""}">
+        <div class="admin-item-main">
+          <div class="admin-item-title">
+            <strong>${escapeHtml(team.teamName)}</strong>
+            <span class="status-pill ${isInactive ? "is-off" : "is-on"}">${isInactive ? "desactivee" : "active"}</span>
+          </div>
+          <span>${usersCount} utilisateur(s) actif(s) - ${sheetsCount} fiche(s)</span>
+        </div>
+        <div class="admin-item-actions">
+          <button class="${buttonClass} mini" type="button" data-admin-team-action="${action}" data-team-key="${escapeHtml(team.teamKey)}">${actionLabel}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderAdminUserItem(user) {
+    const isInactive = user.active === false;
+    const teamInactive = state.teams.some((team) => team.teamKey === user.teamKey && team.active === false);
+    const action = isInactive ? "restore" : "delete";
+    const actionLabel = isInactive ? "Reactiver" : "Supprimer";
+    const buttonClass = isInactive ? "ghost-button" : "danger-button";
+    return `
+      <div class="admin-list-item admin-manage-item ${isInactive || teamInactive ? "is-muted" : ""}">
+        <div class="admin-item-main">
+          <div class="admin-item-title">
+            <strong>${escapeHtml(user.agentName)}</strong>
+            <span class="status-pill ${isInactive || teamInactive ? "is-off" : "is-on"}">${isInactive ? "desactive" : teamInactive ? "equipe inactive" : "actif"}</span>
+          </div>
+          <span>${escapeHtml(user.teamName)}</span>
+        </div>
+        <div class="admin-item-actions">
+          <button class="${buttonClass} mini" type="button" data-admin-user-action="${action}" data-team-key="${escapeHtml(user.teamKey)}" data-agent-key="${escapeHtml(user.agentKey)}">${actionLabel}</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderAdminArchiveItem(archive) {
+    const filledRows = getArchiveFilledRows(archive);
+    const title = getArchiveTitle(archive);
+    const isActiveSheet = archive.status === "active";
+    const rowLabel = Number.isFinite(filledRows) ? `${filledRows} ligne(s)` : "detail a charger";
+    return `
+      <div class="admin-list-item admin-manage-item admin-archive-item">
+        <div class="admin-item-main">
+          <div class="admin-item-title">
+            <strong>${escapeHtml(title || (isActiveSheet ? "Fiche active" : "Fiche archivee"))}</strong>
+            <span class="status-pill ${isActiveSheet ? "is-live" : "is-archived"}">${isActiveSheet ? "active" : "archive"}</span>
+          </div>
+          <span>${rowLabel} - ${escapeHtml(formatDateTime(archive.archivedAt))}</span>
+        </div>
+        <div class="admin-item-actions">
+          <button class="ghost-button mini" type="button" data-admin-open-archive="${escapeHtml(archive.id)}">Ouvrir</button>
+          <button class="danger-button mini" type="button" data-admin-delete-archive="${escapeHtml(archive.id)}">Supprimer</button>
+        </div>
+      </div>
     `;
   }
 
@@ -1665,8 +1831,9 @@
     const loaded = await loadRemoteActiveSheet({ skipIfLocalPending: true });
     await pullRemoteArchivesForTeam(state.session.teamKey, getSessionAgentKey());
     startRealtime();
-    state.syncStatus.remote = "synced";
-    state.syncStatus.message = loaded === false ? "Local protege" : "Synchronise";
+    const hasPendingAfterLoad = state.syncQueue.length > 0;
+    state.syncStatus.remote = hasPendingAfterLoad ? "pending" : "synced";
+    state.syncStatus.message = loaded === false ? "Local protege" : hasPendingAfterLoad ? "A synchroniser" : "Synchronise";
     state.syncStatus.lastSyncAt = new Date().toISOString();
     saveState();
     render();
@@ -1800,6 +1967,7 @@
     }
     if (action.type === "upsertSheet") return ["sheet", action.sheet?.id || action.id].join(":");
     if (action.type === "archiveSheet") return ["archive", action.sheetId].join(":");
+    if (action.type === "deleteSheet") return ["delete-sheet", action.sheetId].join(":");
     if (action.type === "upsertTeam") return ["team", action.teamKey].join(":");
     if (action.type === "upsertUser") return ["user", action.teamKey, action.agentKey].join(":");
     return [action.type, action.actionId].join(":");
@@ -1939,6 +2107,11 @@
           { onConflict: "team_key,agent_key" },
         ),
       );
+      return;
+    }
+
+    if (action.type === "deleteSheet") {
+      await throwOnError(client.from("inventory_sheets").delete().eq("id", action.sheetId));
       return;
     }
 
@@ -2126,7 +2299,8 @@
 
     const sheet = data?.[0];
     if (!sheet) {
-      queueSync("upsertSheet", currentSheetPayload("active"));
+      if (hasCurrentSheetContent()) queueCurrentSheetSnapshotSync();
+      else queueSync("upsertSheet", currentSheetPayload("active"));
       await syncNow({ force: true });
       return true;
     }
@@ -2196,8 +2370,10 @@
   async function mergeRemoteArchives(client, sheets) {
     if (!sheets.length) return;
     const existing = new Map(state.archives.map((archive) => [archive.id, archive]));
-    sheets.forEach((sheet) => existing.set(sheet.id, sheetToArchiveSummary(sheet, existing.get(sheet.id))));
-    state.archives = Array.from(existing.values()).sort(sortArchives);
+    sheets
+      .filter((sheet) => !hasPendingSheetDelete(sheet.id))
+      .forEach((sheet) => existing.set(sheet.id, sheetToArchiveSummary(sheet, existing.get(sheet.id))));
+    state.archives = Array.from(existing.values()).filter((archive) => !hasPendingSheetDelete(archive.id)).sort(sortArchives);
     saveState();
   }
 
@@ -2248,17 +2424,29 @@
   }
 
   function applyRemoteSheet(sheet, cells) {
+    const localSnapshot = {
+      sheetId: state.sheetId,
+      header: { ...state.header },
+      rows: state.rows.map((row) => ({ ...row })),
+    };
+    const remoteSnapshot = cellsToSnapshot(cells);
+    const remoteCellKeys = new Set(cells.map((cell) => getCellSyncKey(cell.row_order, cell.field_key)));
+    const shouldKeepLocalGaps = localSnapshot.sheetId === sheet.id && hasSheetSnapshotContent(localSnapshot.header, localSnapshot.rows);
+    const mergedSnapshot = shouldKeepLocalGaps
+      ? mergeRemoteSnapshotWithLocalGaps(remoteSnapshot, remoteCellKeys, localSnapshot)
+      : { ...remoteSnapshot, preservedCells: [] };
+
     applyingRemote = true;
     state.sheetId = sheet.id;
     state.session.team = sheet.team_name || state.session.team;
     state.session.teamKey = sheet.team_key || state.session.teamKey;
     state.session.agent = sheet.agent_name || state.session.agent;
     state.session.agentKey = sheet.agent_key || state.session.agentKey || normalizeTeam(state.session.agent);
-    state.header = { date: "", agency: "", supervisor: "", locked: false };
-    state.rows = [];
-    cells.forEach(applyRemoteCell);
+    state.header = { date: "", agency: "", supervisor: "", locked: false, ...mergedSnapshot.header };
+    state.rows = mergedSnapshot.rows;
     if (!state.header.date) state.header.date = new Date().toISOString().slice(0, 10);
     applyingRemote = false;
+    if (mergedSnapshot.preservedCells.length) queuePreservedCellsSync(mergedSnapshot.preservedCells);
     saveState();
     renderSheet();
   }
@@ -2277,6 +2465,72 @@
       row.updatedAt = record.updated_at;
       row.updatedBy = record.updated_by;
     }
+  }
+
+  function mergeRemoteSnapshotWithLocalGaps(remoteSnapshot, remoteCellKeys, localSnapshot) {
+    const header = { date: "", agency: "", supervisor: "", locked: false, ...remoteSnapshot.header };
+    const rowsByOrder = new Map((remoteSnapshot.rows || []).map((row) => [Number(row.order), { ...row }]));
+    const preservedCells = [];
+
+    headerFields.forEach((field) => {
+      const value = clean(localSnapshot.header?.[field.key]);
+      if (!value || remoteCellKeys.has(getCellSyncKey(0, field.key))) return;
+      header[field.key] = value;
+      preservedCells.push({ rowOrder: 0, fieldKey: field.key, value });
+    });
+
+    (localSnapshot.rows || []).forEach((localRow) => {
+      if (!rowHasContent(localRow)) return;
+      const order = Number(localRow.order);
+      if (!Number.isFinite(order)) return;
+      const row = rowsByOrder.get(order) || { id: "row-" + order, order };
+      columns.slice(1).forEach((column) => {
+        const value = clean(localRow[column.key]);
+        if (!value || remoteCellKeys.has(getCellSyncKey(order, column.key))) return;
+        row[column.key] = value;
+        row.updatedAt = localRow.updatedAt || new Date().toISOString();
+        row.updatedBy = localRow.updatedBy || state.session.agent;
+        preservedCells.push({ rowOrder: order, fieldKey: column.key, value });
+      });
+      if (rowHasContent(row)) rowsByOrder.set(order, row);
+    });
+
+    return {
+      header,
+      rows: Array.from(rowsByOrder.values()).sort((a, b) => Number(a.order) - Number(b.order)),
+      preservedCells,
+    };
+  }
+
+  function queuePreservedCellsSync(cells) {
+    queueSync("upsertSheet", currentSheetPayload("active"));
+    cells.forEach((cell) => queueCellChange(cell.rowOrder, cell.fieldKey, cell.value));
+  }
+
+  function queueCurrentSheetSnapshotSync() {
+    queueSync("upsertSheet", currentSheetPayload("active"));
+    headerFields.forEach((field) => {
+      const value = clean(state.header[field.key]);
+      if (value) queueCellChange(0, field.key, value);
+    });
+    state.rows.filter(rowHasContent).forEach((row) => {
+      columns.slice(1).forEach((column) => {
+        const value = clean(row[column.key]);
+        if (value) queueCellChange(row.order, column.key, value);
+      });
+    });
+  }
+
+  function hasCurrentSheetContent() {
+    return hasSheetSnapshotContent(state.header, state.rows);
+  }
+
+  function hasSheetSnapshotContent(header, rows) {
+    return Boolean(clean(header?.agency) || clean(header?.supervisor) || (rows || []).some(rowHasContent));
+  }
+
+  function getCellSyncKey(rowOrder, fieldKey) {
+    return `${Number(rowOrder)}:${fieldKey}`;
   }
 
   function hasLocalPendingWork(teamKey = state.session.teamKey || normalizeTeam(state.session.team), agentKey = getSessionAgentKey()) {
@@ -2402,6 +2656,9 @@
     if (action.type === "upsertSheet") {
       action.sheet = action.sheet || payload;
       state.syncQueue = state.syncQueue.filter((item) => !(item.type === "upsertSheet" && item.sheet?.id === action.sheet?.id));
+    }
+    if (action.type === "deleteSheet") {
+      state.syncQueue = state.syncQueue.filter((item) => item.sheetId !== action.sheetId && item.sheet?.id !== action.sheetId);
     }
     state.syncQueue.push(action);
     compactSyncQueue();
@@ -2616,6 +2873,46 @@
     return user;
   }
 
+  function setLocalTeamActive(teamKey, isActive) {
+    const now = new Date().toISOString();
+    let updatedTeam = null;
+    state.teams = state.teams
+      .map((team) => {
+        if (team.teamKey !== teamKey) return team;
+        updatedTeam = { ...team, active: Boolean(isActive), updatedAt: now };
+        return updatedTeam;
+      })
+      .sort((a, b) => a.teamName.localeCompare(b.teamName));
+    return updatedTeam;
+  }
+
+  function setLocalUserActive(teamKey, agentKey, isActive) {
+    const now = new Date().toISOString();
+    let updatedUser = null;
+    state.users = state.users
+      .map((user) => {
+        if (user.teamKey !== teamKey || user.agentKey !== agentKey) return user;
+        updatedUser = { ...user, active: Boolean(isActive), updatedAt: now };
+        return updatedUser;
+      })
+      .sort((a, b) => (a.teamName + a.agentName).localeCompare(b.teamName + b.agentName));
+    return updatedUser;
+  }
+
+  function setLocalUsersActiveByTeam(teamKey, isActive) {
+    const now = new Date().toISOString();
+    const updatedUsers = [];
+    state.users = state.users
+      .map((user) => {
+        if (user.teamKey !== teamKey) return user;
+        const updatedUser = { ...user, active: Boolean(isActive), updatedAt: now };
+        updatedUsers.push(updatedUser);
+        return updatedUser;
+      })
+      .sort((a, b) => (a.teamName + a.agentName).localeCompare(b.teamName + b.agentName));
+    return updatedUsers;
+  }
+
   function ensureLocalTeamAndUser(teamName, agentName) {
     if (!clean(teamName)) return;
     upsertLocalTeam(teamName);
@@ -2689,6 +2986,11 @@
   function archiveHasPendingSync(archiveId, syncQueue = state?.syncQueue || []) {
     if (!archiveId) return false;
     return syncQueue.some((action) => action.sheetId === archiveId || action.sheet?.id === archiveId);
+  }
+
+  function hasPendingSheetDelete(sheetId, syncQueue = state?.syncQueue || []) {
+    if (!sheetId) return false;
+    return syncQueue.some((action) => action.type === "deleteSheet" && action.sheetId === sheetId);
   }
 
   async function hydrateFromOfflineDb() {
@@ -2844,7 +3146,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=23").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=25").catch(() => {});
     }
   }
 })();

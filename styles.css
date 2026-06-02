@@ -193,6 +193,7 @@ textarea {
 
 .primary-button,
 .ghost-button,
+.danger-button,
 .icon-button {
   min-height: 44px;
   border-radius: 8px;
@@ -219,9 +220,27 @@ textarea {
   background: #f8fafb;
 }
 
+.danger-button {
+  border: 1px solid #7f2517;
+  padding: 0.72rem 1rem;
+  color: #fff;
+  background: var(--danger);
+  box-shadow: 0 10px 22px rgba(159, 52, 31, 0.16);
+}
+
+.danger-button:hover {
+  background: #7f2517;
+}
+
 .compact {
   min-height: 36px;
   padding: 0.5rem 0.75rem;
+}
+
+.mini {
+  min-height: 32px;
+  padding: 0.38rem 0.56rem;
+  font-size: 0.78rem;
 }
 
 .icon-button {
@@ -889,63 +908,217 @@ button.excel-cell {
   position: absolute;
   inset: 0;
   overflow: auto;
-  padding: calc(1rem + env(safe-area-inset-top)) 1rem calc(1.2rem + env(safe-area-inset-bottom));
+  padding: calc(0.9rem + env(safe-area-inset-top)) 1rem calc(1rem + env(safe-area-inset-bottom));
   background: var(--surface);
 }
 
-.admin-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.8rem;
-  max-width: 1040px;
-  margin: 0 auto 1rem;
+.admin-panel > .editor-heading,
+.admin-toolbar,
+.admin-workspace {
+  max-width: 1420px;
+  margin-right: auto;
+  margin-left: auto;
 }
 
-.admin-card,
-.admin-lists section {
+.admin-toolbar {
   display: grid;
-  gap: 0.7rem;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 360px);
+  align-items: end;
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.admin-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.admin-metrics div {
   border: 1px solid var(--soft-line);
   border-radius: 8px;
-  padding: 0.95rem;
+  padding: 0.7rem 0.8rem;
   background: #fff;
   box-shadow: var(--shadow-soft);
 }
 
-.admin-card h3,
-.admin-lists h3 {
+.admin-metrics strong,
+.admin-metrics span {
+  display: block;
+}
+
+.admin-metrics strong {
+  font-size: 1.35rem;
+  line-height: 1;
+}
+
+.admin-metrics span {
+  margin-top: 0.25rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.admin-search {
+  display: grid;
+  gap: 0.35rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.admin-search input {
+  min-height: 42px;
+}
+
+.admin-workspace {
+  display: grid;
+  grid-template-columns: minmax(245px, 0.9fr) minmax(300px, 1.05fr) minmax(420px, 1.55fr);
+  gap: 0.85rem;
+  align-items: start;
+}
+
+.admin-column {
+  display: grid;
+  min-height: min(76dvh, 760px);
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 0.65rem;
+  border: 1px solid var(--soft-line);
+  border-radius: 8px;
+  padding: 0.8rem;
+  background: #fff;
+  box-shadow: var(--shadow-soft);
+}
+
+.admin-column-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.admin-column-heading h3 {
   margin: 0;
   font-size: 1rem;
 }
 
-.admin-lists {
+.admin-column-heading span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 850;
+}
+
+.admin-inline-form {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.8rem;
-  max-width: 1040px;
-  margin: 0 auto;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.55rem;
+  padding-bottom: 0.65rem;
+  border-bottom: 1px solid var(--soft-line);
+}
+
+.admin-inline-form label {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 850;
+}
+
+.admin-inline-form input {
+  min-height: 38px;
+  padding: 0.56rem 0.65rem;
+}
+
+.user-inline-form {
+  grid-template-columns: minmax(110px, 0.9fr) minmax(130px, 1fr) auto;
 }
 
 .admin-list {
   display: grid;
   gap: 0.5rem;
+  align-content: start;
+  max-height: calc(76dvh - 148px);
+  overflow: auto;
+  padding-right: 0.15rem;
 }
 
 .admin-list-item {
   border: 1px solid var(--soft-line);
   border-radius: 8px;
-  padding: 0.78rem;
+  padding: 0.7rem;
   background: #f8fafb;
 }
 
-.admin-list-item strong,
-.admin-list-item span {
-  display: block;
+.admin-manage-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.75rem;
 }
 
-.admin-list-item span {
+.admin-manage-item.is-muted {
+  opacity: 0.68;
+  background: #f2f4f5;
+}
+
+.admin-item-main {
+  min-width: 0;
+}
+
+.admin-item-title {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.admin-item-title strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.admin-item-main > span {
+  display: block;
+  margin-top: 0.22rem;
   color: var(--muted);
   font-size: 0.82rem;
+  line-height: 1.25;
+}
+
+.admin-item-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+
+.status-pill {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 0.16rem 0.42rem;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  background: #e9eef2;
+}
+
+.status-pill.is-on,
+.status-pill.is-live {
+  color: #075657;
+  background: rgba(15, 138, 138, 0.12);
+}
+
+.status-pill.is-off {
+  color: #7f2517;
+  background: rgba(159, 52, 31, 0.12);
+}
+
+.status-pill.is-archived {
+  color: #364655;
+  background: #e8edf0;
 }
 
 .editor {
@@ -1094,8 +1267,11 @@ button.excel-cell {
     padding-left: 0.85rem;
   }
 
-  .admin-grid,
-  .admin-lists {
+  .admin-toolbar,
+  .admin-workspace,
+  .admin-metrics,
+  .admin-inline-form,
+  .user-inline-form {
     grid-template-columns: 1fr;
   }
 
@@ -1120,15 +1296,40 @@ button.excel-cell {
     line-height: 1.05;
   }
 
-  .admin-card,
-  .admin-lists section {
+  .admin-toolbar {
+    gap: 0.55rem;
+    margin-bottom: 0.65rem;
+  }
+
+  .admin-metrics {
+    gap: 0.4rem;
+  }
+
+  .admin-metrics div {
+    padding: 0.55rem 0.62rem;
+  }
+
+  .admin-metrics strong {
+    font-size: 1.12rem;
+  }
+
+  .admin-search input {
+    min-height: 38px;
+  }
+
+  .admin-column {
+    min-height: auto;
     gap: 0.48rem;
     padding: 0.62rem;
   }
 
-  .admin-card h3,
-  .admin-lists h3 {
+  .admin-column-heading h3 {
     font-size: 0.92rem;
+  }
+
+  .admin-inline-form {
+    align-items: stretch;
+    padding-bottom: 0.52rem;
   }
 
   .admin input {
@@ -1137,16 +1338,37 @@ button.excel-cell {
     font-size: 16px;
   }
 
-  .admin .primary-button {
+  .admin .primary-button,
+  .admin .danger-button,
+  .admin .ghost-button {
     min-height: 38px;
     padding: 0.52rem 0.72rem;
+  }
+
+  .admin-list {
+    max-height: none;
+    overflow: visible;
+    padding-right: 0;
   }
 
   .admin-list-item {
     padding: 0.52rem;
   }
 
-  .admin-list-item span {
+  .admin-manage-item {
+    grid-template-columns: 1fr;
+    gap: 0.52rem;
+  }
+
+  .admin-item-actions {
+    justify-content: stretch;
+  }
+
+  .admin-item-actions button {
+    flex: 1 1 auto;
+  }
+
+  .admin-item-main > span {
     font-size: 0.76rem;
   }
 

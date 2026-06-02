@@ -6,8 +6,8 @@
     <meta name="theme-color" content="#123142" />
     <title>Fiche d'inventaire GECAF</title>
     <link rel="icon" href="data:," />
-    <link rel="manifest" href="manifest.webmanifest?v=23" />
-    <link rel="stylesheet" href="styles.css?v=23" />
+    <link rel="manifest" href="manifest.webmanifest?v=25" />
+    <link rel="stylesheet" href="styles.css?v=25" />
   </head>
   <body>
     <main class="app">
@@ -103,46 +103,72 @@
         <div class="editor-heading">
           <div>
             <p class="eyebrow">Administration</p>
-            <h2 id="adminTitle">Equipes et utilisateurs</h2>
+            <h2 id="adminTitle">Pilotage terrain</h2>
           </div>
           <button class="icon-button dark" type="button" data-close-admin aria-label="Fermer">X</button>
         </div>
 
-        <div class="admin-grid">
-          <form id="teamForm" class="admin-card">
-            <h3>Equipe</h3>
-            <label>
-              Nom de l'equipe
-              <input name="teamName" placeholder="Equipe 1" required />
-            </label>
-            <button class="primary-button compact" type="submit">Enregistrer</button>
-          </form>
-
-          <form id="userForm" class="admin-card">
-            <h3>Utilisateur</h3>
-            <label>
-              Equipe
-              <input name="teamName" placeholder="Equipe 1" required />
-            </label>
-            <label>
-              Agent
-              <input name="agentName" placeholder="Nom de l'agent" required />
-            </label>
-            <button class="primary-button compact" type="submit">Enregistrer</button>
-          </form>
+        <div class="admin-toolbar">
+          <div class="admin-metrics" aria-label="Vue generale">
+            <div>
+              <strong id="adminTeamCount">0</strong>
+              <span>equipes actives</span>
+            </div>
+            <div>
+              <strong id="adminUserCount">0</strong>
+              <span>utilisateurs actifs</span>
+            </div>
+            <div>
+              <strong id="adminArchiveCount">0</strong>
+              <span>fiches visibles</span>
+            </div>
+          </div>
+          <label class="admin-search">
+            Rechercher
+            <input id="adminSearch" type="search" placeholder="Equipe, agent, agence..." autocomplete="off" />
+          </label>
         </div>
 
-        <div class="admin-lists">
-          <section>
-            <h3>Equipes</h3>
+        <div class="admin-workspace">
+          <section class="admin-column">
+            <div class="admin-column-heading">
+              <h3>Equipes</h3>
+              <span id="adminTeamsMeta">0 element</span>
+            </div>
+            <form id="teamForm" class="admin-inline-form">
+              <label>
+                Nom de l'equipe
+                <input name="teamName" placeholder="Equipe 1" required />
+              </label>
+              <button class="primary-button compact" type="submit">Ajouter</button>
+            </form>
             <div id="adminTeamsList" class="admin-list"></div>
           </section>
-          <section>
-            <h3>Utilisateurs</h3>
+
+          <section class="admin-column">
+            <div class="admin-column-heading">
+              <h3>Utilisateurs</h3>
+              <span id="adminUsersMeta">0 element</span>
+            </div>
+            <form id="userForm" class="admin-inline-form user-inline-form">
+              <label>
+                Equipe
+                <input name="teamName" placeholder="Equipe 1" required />
+              </label>
+              <label>
+                Agent
+                <input name="agentName" placeholder="Nom de l'agent" required />
+              </label>
+              <button class="primary-button compact" type="submit">Ajouter</button>
+            </form>
             <div id="adminUsersList" class="admin-list"></div>
           </section>
-          <section>
-            <h3>Fiches et archives</h3>
+
+          <section class="admin-column admin-column-wide">
+            <div class="admin-column-heading">
+              <h3>Fiches et archives</h3>
+              <span id="adminArchivesMeta">0 element</span>
+            </div>
             <div id="adminArchivesList" class="admin-list"></div>
           </section>
         </div>
@@ -154,7 +180,7 @@
     </template>
 
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=23"></script>
-    <script src="app.js?v=23"></script>
+    <script src="supabase-config.js?v=25"></script>
+    <script src="app.js?v=25"></script>
   </body>
 </html>
