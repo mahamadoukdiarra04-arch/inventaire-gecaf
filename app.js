@@ -599,6 +599,9 @@
   function bindAdmin() {
     $$("[data-close-admin]").forEach((node) => node.addEventListener("click", closeAdminPanel));
     $("#adminSearch").addEventListener("input", renderAdminPanel);
+    $("#adminRefreshButton").addEventListener("click", () => {
+      refreshAdminData({ keepPanelOpen: true }).catch(() => {});
+    });
 
     $("#teamForm").addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1869,19 +1872,24 @@
     }
   }
 
-  async function refreshAdminData() {
+  async function refreshAdminData({ keepPanelOpen = false } = {}) {
     if (!isAdminSession()) return;
     createSyncTimer();
     if (hasRemoteConfig() && navigator.onLine) {
+      const refreshButton = $("#adminRefreshButton");
       try {
+        if (refreshButton) refreshButton.disabled = true;
         state.syncStatus.remote = "syncing";
         state.syncStatus.message = "Chargement admin...";
         saveState();
+        if (keepPanelOpen) renderAdminPanel();
         await syncNow({ force: true });
         await pullRemoteAdminData();
       } catch {
         state.syncStatus.remote = "error";
         state.syncStatus.message = "Admin local";
+      } finally {
+        if (refreshButton) refreshButton.disabled = false;
       }
     }
     saveState();

@@ -922,10 +922,14 @@ button.excel-cell {
 
 .admin-toolbar {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(240px, 360px);
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 360px) auto;
   align-items: end;
   gap: 0.75rem;
   margin-bottom: 0.85rem;
+}
+
+.admin-refresh-button {
+  white-space: nowrap;
 }
 
 .admin-metrics {
