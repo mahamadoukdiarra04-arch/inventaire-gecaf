@@ -1,6 +1,6 @@
-const CACHE_NAME = "gecaf-inv-v31";
+const CACHE_NAME = "gecaf-inv-v32";
 const PAGE_FALLBACK = "./";
-const ASSETS = [PAGE_FALLBACK, "./styles-v31.css", "./app-v31.js", "./supabase-config-v31.js", "./manifest.webmanifest"];
+const ASSETS = [PAGE_FALLBACK, "./styles-v32.css", "./app-v32.js", "./supabase-config-v32.js", "./manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

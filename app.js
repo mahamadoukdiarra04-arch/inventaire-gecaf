@@ -954,7 +954,15 @@
 
     const client = getSupabaseClient();
     if (!client) return null;
-    const cells = await fetchSheetCells(client, sheet.id);
+    let cells = await fetchSheetCells(client, sheet.id);
+    if (hasLocalDetails) {
+      const recovered = queueNewerLocalArchiveCells(archive, sheet, cells);
+      if (recovered) {
+        saveState();
+        await syncNow({ force: true }).catch(() => {});
+        cells = await fetchSheetCells(client, sheet.id);
+      }
+    }
     const fullArchive = sheetToArchive(sheet, cells);
     fullArchive.hasDetails = true;
     fullArchive.filledRows = getArchiveFilledRows(fullArchive);
@@ -2754,7 +2762,8 @@
   }
 
   function queueCellChange(rowOrder, fieldKey, value) {
-    if (applyingRemote || !state.session.connected || isAdminSession()) return;
+    if (applyingRemote || !state.session.connected) return false;
+    if (isAdminSession() && !state.viewingArchiveId) return false;
     const sheetStatus = getCurrentSheetStatus();
     const archivedAt = sheetStatus === "archived" ? getCurrentSheetArchivedAt() : "";
     const action = {
@@ -2774,6 +2783,73 @@
       archivedAt,
     };
     queueSync(action.type, action);
+    return true;
+  }
+
+  function queueNewerLocalArchiveCells(archive, sheet, remoteCells) {
+    if (!archive?.id || !Array.isArray(archive.rows)) return 0;
+    const remoteByKey = new Map(remoteCells.map((cell) => [getCellSyncKey(cell.row_order, cell.field_key), cell]));
+    const remoteUpdatedAt = newestIso([sheet.updated_at, sheet.archived_at, ...remoteCells.map((cell) => cell.updated_at)]);
+    const localUpdatedAt = newestIso([archive.updatedAt, archive.session?.connectedAt, ...archive.rows.map((row) => row.updatedAt)]);
+    if (!localUpdatedAt || (remoteUpdatedAt && localUpdatedAt <= remoteUpdatedAt)) return 0;
+
+    const teamKey = archive.session?.teamKey || sheet.team_key || normalizeTeam(archive.session?.team || sheet.team_name);
+    const teamName = archive.session?.team || sheet.team_name || state.session.team;
+    const agentKey = getArchiveAgentKey(archive) || sheet.agent_key || normalizeTeam(archive.session?.agent || sheet.agent_name);
+    const agentName = archive.session?.agent || sheet.agent_name || state.session.agent;
+    const archivedAt = archive.archivedAt || sheet.archived_at || remoteUpdatedAt || localUpdatedAt;
+    let recovered = 0;
+
+    headerFields.forEach((field) => {
+      const localValue = clean(archive.header?.[field.key]);
+      if (!localValue) return;
+      const remoteCell = remoteByKey.get(getCellSyncKey(0, field.key));
+      const remoteValue = clean(remoteCell?.value);
+      const localFieldUpdatedAt = archive.updatedAt || localUpdatedAt;
+      if (localValue === remoteValue || (remoteCell?.updated_at && localFieldUpdatedAt <= remoteCell.updated_at)) return;
+      queueArchiveCellRecovery({ sheetId: archive.id, teamKey, teamName, agentKey, agentName, archivedAt, rowOrder: 0, fieldKey: field.key, value: localValue, updatedAt: localFieldUpdatedAt });
+      recovered += 1;
+    });
+
+    archive.rows.forEach((row) => {
+      const rowOrder = Number(row.order);
+      if (!Number.isFinite(rowOrder)) return;
+      const localFieldUpdatedAt = row.updatedAt || archive.updatedAt || localUpdatedAt;
+      columns.slice(1).forEach((column) => {
+        const localValue = clean(row[column.key]);
+        if (!localValue) return;
+        const remoteCell = remoteByKey.get(getCellSyncKey(rowOrder, column.key));
+        const remoteValue = clean(remoteCell?.value);
+        if (localValue === remoteValue || (remoteCell?.updated_at && localFieldUpdatedAt <= remoteCell.updated_at)) return;
+        queueArchiveCellRecovery({ sheetId: archive.id, teamKey, teamName, agentKey, agentName, archivedAt, rowOrder, fieldKey: column.key, value: localValue, updatedAt: localFieldUpdatedAt });
+        recovered += 1;
+      });
+    });
+
+    if (recovered) {
+      state.syncStatus.remote = "pending";
+      state.syncStatus.message = `${recovered} correction(s) locale(s) a synchroniser`;
+    }
+    return recovered;
+  }
+
+  function queueArchiveCellRecovery({ sheetId, teamKey, teamName, agentKey, agentName, archivedAt, rowOrder, fieldKey, value, updatedAt }) {
+    queueSync("upsertCell", {
+      actionId: makeId("op"),
+      type: "upsertCell",
+      sheetId,
+      teamKey,
+      teamName,
+      agentKey,
+      agentName,
+      rowOrder: Number(rowOrder),
+      fieldKey,
+      value: clean(value),
+      updatedAt: updatedAt || new Date().toISOString(),
+      updatedBy: agentName || state.session.agent,
+      sheetStatus: "archived",
+      archivedAt,
+    });
   }
 
   function queueCellSnapshotChange(payload) {
@@ -3332,7 +3408,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=31").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=32").catch(() => {});
     }
   }
 })();

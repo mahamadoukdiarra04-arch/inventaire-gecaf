@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const root = process.cwd();
 const dist = join(root, "dist");
-const buildVersion = "31";
+const buildVersion = "32";
 const files = ["index.html", "styles.css", "app.js", "manifest.webmanifest", "sw.js", "rescue.html", "_redirects", "_headers"];
 
 await rm(dist, { recursive: true, force: true });
