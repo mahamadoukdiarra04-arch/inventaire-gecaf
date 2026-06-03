@@ -159,6 +159,7 @@
         teams: normalizeTeams(parsed.teams),
         users: normalizeUsers(parsed.users),
         syncQueue: Array.isArray(parsed.syncQueue) ? parsed.syncQueue : [],
+        viewingArchiveId: "",
         syncStatus: { ...fallback.syncStatus, ...(parsed.syncStatus || {}), online: navigator.onLine },
       };
     } catch {
@@ -272,6 +273,7 @@
       state.session.connected = false;
       state.session.isAdmin = false;
       state.session.connectedAt = "";
+      state.viewingArchiveId = "";
       saveState();
       render();
     });
@@ -928,11 +930,14 @@
 
   async function ensureArchiveDetails(archive) {
     if (!archive) return null;
-    if (archive.hasDetails !== false && Array.isArray(archive.rows) && archive.rows.length) return archive;
+    const hasLocalDetails = archive.hasDetails !== false && Array.isArray(archive.rows) && archive.rows.length;
+    const canRefreshRemote = hasRemoteConfig() && navigator.onLine && !archiveHasPendingSync(archive.id);
+    if (hasLocalDetails && !canRefreshRemote) return archive;
     if (!hasRemoteConfig() || !navigator.onLine) {
       alert("Le detail de cette archive est sur le serveur. Reconnectez-vous pour l'ouvrir.");
       return null;
     }
+    if (archiveHasPendingSync(archive.id)) return hasLocalDetails ? archive : null;
 
     const client = getSupabaseClient();
     if (!client) return null;
@@ -1366,6 +1371,7 @@
       }
       state.header[active.key] = value;
       queueCellChange(0, active.key, value);
+      updateOpenArchiveSnapshot();
       saveState();
       return;
     }
@@ -1382,8 +1388,37 @@
       row.updatedAt = new Date().toISOString();
       row.updatedBy = state.session.agent;
       queueCellChange(row.order, column.key, value);
+      updateOpenArchiveSnapshot();
     }
     saveState();
+  }
+
+  function updateOpenArchiveSnapshot() {
+    if (!state.viewingArchiveId) return;
+    const updatedAt = new Date().toISOString();
+    const existing = state.archives.find((archive) => archive.id === state.viewingArchiveId) || {};
+    const session = {
+      connected: true,
+      team: state.session.team || existing.session?.team || "",
+      teamKey: state.session.teamKey || existing.session?.teamKey || "",
+      agent: state.session.agent || existing.session?.agent || "",
+      agentKey: getSessionAgentKey() || existing.session?.agentKey || "",
+      isAdmin: false,
+      connectedAt: updatedAt,
+    };
+    const archive = {
+      ...existing,
+      id: state.viewingArchiveId,
+      status: "archived",
+      archivedAt: existing.archivedAt || updatedAt,
+      updatedAt,
+      session,
+      header: { ...state.header },
+      rows: state.rows.map((row) => ({ ...row })),
+      hasDetails: true,
+      filledRows: state.rows.filter(rowHasContent).length,
+    };
+    state.archives = [archive, ...state.archives.filter((item) => item.id !== archive.id)].sort(sortArchives);
   }
 
   function ensureRow(order) {
@@ -2754,6 +2789,7 @@
       id: sheet.id,
       status: sheet.status || "archived",
       archivedAt: sheet.archived_at || sheet.updated_at,
+      updatedAt: sheet.updated_at || sheet.archived_at,
       hasDetails: true,
       filledRows: snapshot.rows.filter(rowHasContent).length,
       session: {
@@ -2773,6 +2809,10 @@
   function sheetToArchiveSummary(sheet, existing = null) {
     const hasPendingDetails = existing && archiveHasPendingSync(existing.id);
     if (hasPendingDetails && existing?.rows?.length) return existing;
+    const remoteUpdatedAt = sheet.updated_at || sheet.archived_at || "";
+    const existingUpdatedAt = existing?.updatedAt || existing?.session?.connectedAt || existing?.archivedAt || "";
+    const remoteHasNewerDetails = Boolean(existing?.rows?.length && remoteUpdatedAt && remoteUpdatedAt > existingUpdatedAt);
+    const keepExistingRows = Boolean(existing?.hasDetails !== false && existing?.rows?.length && !remoteHasNewerDetails);
     const header = existing?.header || {
       date: String(sheet.archived_at || sheet.updated_at || "").slice(0, 10),
       agency: "",
@@ -2783,10 +2823,11 @@
       id: sheet.id,
       status: sheet.status || "archived",
       archivedAt: sheet.archived_at || sheet.updated_at,
-      hasDetails: Boolean(existing?.rows?.length && existing?.hasDetails !== false),
-      filledRows: Number.isFinite(existing?.filledRows)
-        ? existing.filledRows
-        : (existing?.rows?.length ? getArchiveFilledRows(existing) : null),
+      updatedAt: remoteUpdatedAt,
+      hasDetails: keepExistingRows,
+      filledRows: keepExistingRows
+        ? (Number.isFinite(existing?.filledRows) ? existing.filledRows : getArchiveFilledRows(existing))
+        : null,
       session: {
         connected: true,
         team: sheet.team_name || existing?.session?.team || "",
@@ -2794,10 +2835,10 @@
         agent: sheet.agent_name || sheet.updated_by || sheet.created_by || existing?.session?.agent || "",
         agentKey: sheet.agent_key || existing?.session?.agentKey || normalizeTeam(sheet.agent_name || sheet.updated_by || sheet.created_by || existing?.session?.agent || ""),
         isAdmin: false,
-        connectedAt: sheet.updated_at || existing?.session?.connectedAt || "",
+        connectedAt: remoteUpdatedAt || existing?.session?.connectedAt || "",
       },
       header,
-      rows: existing?.hasDetails !== false && existing?.rows?.length ? existing.rows : [],
+      rows: keepExistingRows ? existing.rows : [],
     };
   }
 
@@ -3248,7 +3289,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=27").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=28").catch(() => {});
     }
   }
 })();
