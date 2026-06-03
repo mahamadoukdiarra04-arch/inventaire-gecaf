@@ -907,7 +907,7 @@
   }
 
   async function loadArchive(id) {
-    const archive = await ensureArchiveDetails(getVisibleArchives().find((item) => item.id === id));
+    const archive = await ensureArchiveDetails(getVisibleArchives().find((item) => item.id === id), { forceRemote: true });
     if (!archive) return;
     const wasAdmin = isAdminSession();
     if (!wasAdmin && !state.viewingArchiveId) archiveCurrentSheet();
@@ -931,29 +931,37 @@
     renderSheet();
   }
 
-  async function ensureArchiveDetails(archive) {
+  async function ensureArchiveDetails(archive, { forceRemote = false } = {}) {
     if (!archive) return null;
     const hasLocalDetails = archive.hasDetails !== false && Array.isArray(archive.rows) && archive.rows.length;
-    const canRefreshRemote = hasRemoteConfig() && navigator.onLine && !archiveHasPendingSync(archive.id);
-    if (hasLocalDetails && !canRefreshRemote) return archive;
+    if (archiveHasPendingSync(archive.id) && hasRemoteConfig() && navigator.onLine) {
+      await syncNow({ force: true }).catch(() => {});
+    }
+    const hasPendingSync = archiveHasPendingSync(archive.id);
+    const canRefreshRemote = hasRemoteConfig() && navigator.onLine && !hasPendingSync;
+    if (hasLocalDetails && !forceRemote && !canRefreshRemote) return archive;
     if (!hasRemoteConfig() || !navigator.onLine) {
       alert("Le detail de cette archive est sur le serveur. Reconnectez-vous pour l'ouvrir.");
       return null;
     }
-    if (archiveHasPendingSync(archive.id)) return hasLocalDetails ? archive : null;
+    if (hasPendingSync) {
+      alert("Cette fiche a encore des modifications locales en attente. Laissez la synchronisation se terminer avant de recharger le contenu serveur.");
+      return hasLocalDetails ? archive : null;
+    }
+
+    const sheet = await fetchRemoteSheetById(archive.id);
+    if (!sheet) return null;
 
     const client = getSupabaseClient();
     if (!client) return null;
-    const { data, error } = await client.from("inventory_sheets").select("*").eq("id", archive.id).limit(1);
-    if (error) throw error;
-    const sheet = data?.[0];
-    if (!sheet) return null;
-
     const cells = await fetchSheetCells(client, sheet.id);
     const fullArchive = sheetToArchive(sheet, cells);
     fullArchive.hasDetails = true;
     fullArchive.filledRows = getArchiveFilledRows(fullArchive);
     state.archives = [fullArchive, ...state.archives.filter((item) => item.id !== fullArchive.id)].sort(sortArchives);
+    state.syncStatus.remote = "synced";
+    state.syncStatus.message = "Archive rechargee depuis le serveur";
+    state.syncStatus.lastSyncAt = new Date().toISOString();
     saveState();
     return fullArchive;
   }
@@ -2491,6 +2499,27 @@
     return fetchCellsForSheetIds(client, [sheetId]);
   }
 
+  async function fetchRemoteSheetById(sheetId) {
+    const params = new URLSearchParams({
+      select: "*",
+      id: `eq.${sheetId}`,
+    });
+    const endpoint = `${REMOTE_CONFIG.supabaseUrl.replace(/\/$/, "")}/rest/v1/inventory_sheets?${params.toString()}`;
+    const response = await fetch(endpoint, {
+      cache: "no-store",
+      headers: {
+        Accept: "application/json",
+        "Cache-Control": "no-cache",
+        Pragma: "no-cache",
+        apikey: REMOTE_CONFIG.supabaseAnonKey,
+        Authorization: `Bearer ${REMOTE_CONFIG.supabaseAnonKey}`,
+      },
+    });
+    if (!response.ok) throw new Error(`Lecture de la fiche impossible (${response.status})`);
+    const rows = await response.json();
+    return rows?.[0] || null;
+  }
+
   async function fetchCellsForSheetIds(client, sheetIds) {
     const ids = Array.from(new Set(sheetIds.filter(Boolean)));
     const cells = [];
@@ -2793,11 +2822,12 @@
 
   function sheetToArchive(sheet, cells) {
     const snapshot = cellsToSnapshot(cells);
+    const contentUpdatedAt = newestIso([sheet.updated_at, sheet.archived_at, ...cells.map((cell) => cell.updated_at)]);
     return {
       id: sheet.id,
       status: sheet.status || "archived",
       archivedAt: sheet.archived_at || sheet.updated_at,
-      updatedAt: sheet.updated_at || sheet.archived_at,
+      updatedAt: contentUpdatedAt || sheet.updated_at || sheet.archived_at,
       hasDetails: true,
       filledRows: snapshot.rows.filter(rowHasContent).length,
       session: {
@@ -2807,7 +2837,7 @@
         agent: sheet.agent_name || sheet.updated_by || sheet.created_by || "",
         agentKey: sheet.agent_key || normalizeTeam(sheet.agent_name || sheet.updated_by || sheet.created_by || ""),
         isAdmin: false,
-        connectedAt: sheet.updated_at || "",
+        connectedAt: contentUpdatedAt || sheet.updated_at || "",
       },
       header: snapshot.header,
       rows: snapshot.rows,
@@ -3222,6 +3252,11 @@
     return sorted[sorted.length - 1] || new Date().toISOString();
   }
 
+  function newestIso(values) {
+    const sorted = values.filter(Boolean).sort();
+    return sorted[sorted.length - 1] || "";
+  }
+
   function getErrorMessage(error) {
     return clean(error?.message || error?.details || error?.hint || error) || "Erreur de synchronisation";
   }
@@ -3297,7 +3332,7 @@
 
   function registerServiceWorker() {
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
-      navigator.serviceWorker.register("sw.js?v=29").catch(() => {});
+      navigator.serviceWorker.register("sw.js?v=30").catch(() => {});
     }
   }
 })();
