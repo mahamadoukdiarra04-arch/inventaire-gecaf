@@ -3,8 +3,21 @@ import { join } from "node:path";
 
 const root = process.cwd();
 const dist = join(root, "dist");
-const buildVersion = "32";
-const files = ["index.html", "styles.css", "app.js", "manifest.webmanifest", "sw.js", "rescue.html", "_redirects", "_headers"];
+const buildVersion = "33";
+const files = [
+  "index.html",
+  "styles.css",
+  "mamy-styles.css",
+  "app.js",
+  "portal.js",
+  "mamy-app.js",
+  "mamy-products.json",
+  "manifest.webmanifest",
+  "sw.js",
+  "rescue.html",
+  "_redirects",
+  "_headers",
+];
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
@@ -14,7 +27,10 @@ for (const file of files) {
   if (file === "index.html") {
     content = content
       .replace(/styles\.css\?v=\d+/g, `styles-v${buildVersion}.css`)
+      .replace(/mamy-styles\.css\?v=\d+/g, `mamy-styles-v${buildVersion}.css`)
       .replace(/app\.js\?v=\d+/g, `app-v${buildVersion}.js`)
+      .replace(/portal\.js\?v=\d+/g, `portal-v${buildVersion}.js`)
+      .replace(/mamy-app\.js\?v=\d+/g, `mamy-app-v${buildVersion}.js`)
       .replace(/supabase-config\.js\?v=\d+/g, `supabase-config-v${buildVersion}.js`)
       .replace(/manifest\.webmanifest\?v=\d+/g, `manifest.webmanifest?v=${buildVersion}`);
   }
@@ -38,3 +54,7 @@ await writeFile(join(dist, "supabase-config.js"), config);
 await writeFile(join(dist, `supabase-config-v${buildVersion}.js`), config);
 await writeFile(join(dist, `app-v${buildVersion}.js`), await readFile(join(root, "app.js")));
 await writeFile(join(dist, `styles-v${buildVersion}.css`), await readFile(join(root, "styles.css")));
+await writeFile(join(dist, `portal-v${buildVersion}.js`), await readFile(join(root, "portal.js")));
+await writeFile(join(dist, `mamy-app-v${buildVersion}.js`), await readFile(join(root, "mamy-app.js")));
+await writeFile(join(dist, `mamy-styles-v${buildVersion}.css`), await readFile(join(root, "mamy-styles.css")));
+await writeFile(join(dist, `mamy-products-v${buildVersion}.json`), await readFile(join(root, "mamy-products.json")));

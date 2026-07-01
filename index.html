@@ -4,13 +4,33 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#123142" />
-    <title>Fiche d'inventaire GECAF</title>
+    <title>Inventaires terrain EKAM Capital</title>
     <link rel="icon" href="data:," />
-    <link rel="manifest" href="manifest.webmanifest?v=32" />
-    <link rel="stylesheet" href="styles.css?v=32" />
+    <link rel="manifest" href="manifest.webmanifest?v=33" />
+    <link rel="stylesheet" href="styles.css?v=33" />
+    <link rel="stylesheet" href="mamy-styles.css?v=33" />
   </head>
   <body>
-    <main class="app">
+    <section class="portal-view" id="portalView" aria-label="Choix de l'inventaire">
+      <div class="portal-brand">
+        <span>EKAM Capital</span>
+        <strong>Inventaires terrain</strong>
+      </div>
+      <div class="portal-grid">
+        <button class="portal-card portal-card-soro" type="button" data-open-app="soro">
+          <span class="portal-kicker">Immobilisations</span>
+          <strong>Inventaire SORO YIRIWASO</strong>
+          <span>Fiche terrain au format validé, archives et exports.</span>
+        </button>
+        <button class="portal-card portal-card-mamy" type="button" data-open-app="mamy">
+          <span class="portal-kicker">Supermarché</span>
+          <strong>Inventaire MAMY MARKET</strong>
+          <span>Scan code-barres, comptage rapide, écarts stock Odoo.</span>
+        </button>
+      </div>
+    </section>
+
+    <main class="app" id="soroApp" aria-hidden="true">
       <section class="login-view" id="loginView">
         <div class="login-card">
           <div class="login-brand">
@@ -60,6 +80,197 @@
           <span class="sync-badge" id="syncBadge">Local</span>
         </div>
         <button class="fab" type="button" id="addRowButton" aria-label="Nouvel enregistrement">+</button>
+      </section>
+    </main>
+
+    <main class="mamy-app-shell" id="mamyApp" aria-hidden="true">
+      <section class="mamy-login" id="mamyLoginView">
+        <div class="mamy-glass-card mamy-login-card">
+          <button class="mamy-back-link" type="button" data-back-portal>Accueil</button>
+          <div class="mamy-logo-row">
+            <div class="mamy-mark">M</div>
+            <div>
+              <p class="mamy-eyebrow">MAMY MARKET</p>
+              <h1>Inventaire stock</h1>
+            </div>
+          </div>
+          <form id="mamyLoginForm" class="mamy-form" autocomplete="off">
+            <label>
+              Equipe
+              <input name="team" placeholder="Equipe 1" autocapitalize="words" autocomplete="off" required />
+            </label>
+            <label>
+              Agent
+              <input name="agent" placeholder="Nom de l'agent" autocapitalize="words" autocomplete="off" required />
+            </label>
+            <button class="mamy-primary" type="submit">Ouvrir le comptage</button>
+          </form>
+          <p class="mamy-note">Admin : equipe_admin / admin1</p>
+        </div>
+      </section>
+
+      <section class="mamy-workspace" id="mamyWorkspace" aria-label="Inventaire MAMY MARKET">
+        <header class="mamy-topbar">
+          <div>
+            <p class="mamy-eyebrow">Inventaire MAMY MARKET</p>
+            <h1 id="mamySessionTitle">Comptage terrain</h1>
+          </div>
+          <div class="mamy-top-actions">
+            <span class="mamy-sync-pill" id="mamySyncBadge">Local</span>
+            <button class="mamy-icon-button" type="button" id="mamyAdminButton" title="Administration">Admin</button>
+            <button class="mamy-icon-button" type="button" id="mamyLogoutButton" title="Changer d'agent">Sortir</button>
+          </div>
+        </header>
+
+        <section class="mamy-stats" aria-label="Indicateurs">
+          <div class="mamy-stat">
+            <span>Produits</span>
+            <strong id="mamyTotalProducts">0</strong>
+          </div>
+          <div class="mamy-stat">
+            <span>Comptés</span>
+            <strong id="mamyCountedProducts">0</strong>
+          </div>
+          <div class="mamy-stat">
+            <span>Ecarts</span>
+            <strong id="mamyDiffProducts">0</strong>
+          </div>
+          <div class="mamy-stat">
+            <span>Sans code</span>
+            <strong id="mamyNoBarcodeProducts">0</strong>
+          </div>
+        </section>
+
+        <section class="mamy-counter-layout">
+          <div class="mamy-glass-card mamy-scan-panel">
+            <div class="mamy-section-heading">
+              <div>
+                <p class="mamy-eyebrow">Recherche produit</p>
+                <h2>Scanner ou chercher</h2>
+              </div>
+              <button class="mamy-secondary" type="button" id="mamyScanButton">Scanner</button>
+            </div>
+            <label class="mamy-search-box">
+              <input id="mamySearchInput" type="search" placeholder="Code-barres, nom, référence..." autocomplete="off" />
+            </label>
+            <div class="mamy-video-wrap" id="mamyScannerPanel" hidden>
+              <video id="mamyScannerVideo" playsinline muted></video>
+              <button class="mamy-secondary" type="button" id="mamyStopScanButton">Arrêter</button>
+            </div>
+            <div class="mamy-result-list" id="mamySearchResults"></div>
+          </div>
+
+          <div class="mamy-glass-card mamy-product-panel">
+            <div class="mamy-section-heading">
+              <div>
+                <p class="mamy-eyebrow">Comptage</p>
+                <h2 id="mamySelectedName">Aucun produit sélectionné</h2>
+              </div>
+              <span class="mamy-chip" id="mamySelectedBarcode">Code-barres</span>
+            </div>
+            <div class="mamy-product-meta" id="mamyProductMeta"></div>
+            <form id="mamyCountForm" class="mamy-count-form">
+              <label>
+                Zone / Rayon
+                <input id="mamyZoneInput" name="zone" list="mamyZoneList" placeholder="Rayon, réserve, caisse..." required />
+                <datalist id="mamyZoneList">
+                  <option value="Rayon"></option>
+                  <option value="Réserve"></option>
+                  <option value="Caisse"></option>
+                  <option value="Frais"></option>
+                  <option value="Hygiène"></option>
+                  <option value="Boissons"></option>
+                </datalist>
+              </label>
+              <label>
+                Quantité comptée
+                <input id="mamyQtyInput" name="countedQty" type="number" inputmode="decimal" step="0.01" placeholder="0" required />
+              </label>
+              <label>
+                Observation
+                <textarea id="mamyNoteInput" name="note" placeholder="Produit abîmé, sans étiquette, doute..."></textarea>
+              </label>
+              <div class="mamy-form-actions">
+                <button class="mamy-primary" type="submit">Enregistrer</button>
+                <button class="mamy-secondary" type="button" id="mamyAddQtyButton">Ajouter quantité</button>
+                <button class="mamy-secondary" type="button" id="mamyZeroButton">Stock 0</button>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section class="mamy-glass-card mamy-recent-panel">
+          <div class="mamy-section-heading">
+            <div>
+              <p class="mamy-eyebrow">Dernières saisies</p>
+              <h2>Comptage enregistré</h2>
+            </div>
+            <button class="mamy-secondary" type="button" id="mamyExportButton">Exporter CSV</button>
+          </div>
+          <div class="mamy-table-wrap">
+            <table class="mamy-table">
+              <thead>
+                <tr>
+                  <th>Produit</th>
+                  <th>Zone</th>
+                  <th>Stock Odoo</th>
+                  <th>Compté</th>
+                  <th>Ecart</th>
+                  <th>Agent</th>
+                </tr>
+              </thead>
+              <tbody id="mamyRecentRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+
+      <section class="mamy-admin" id="mamyAdminPanel" aria-hidden="true">
+        <div class="mamy-admin-backdrop" data-close-mamy-admin></div>
+        <div class="mamy-glass-card mamy-admin-panel">
+          <div class="mamy-section-heading">
+            <div>
+              <p class="mamy-eyebrow">Administration MAMY MARKET</p>
+              <h2>Suivi inventaire</h2>
+            </div>
+            <button class="mamy-icon-button" type="button" data-close-mamy-admin>Fermer</button>
+          </div>
+          <div class="mamy-admin-grid">
+            <div class="mamy-stat">
+              <span>Lignes sync</span>
+              <strong id="mamyAdminLines">0</strong>
+            </div>
+            <div class="mamy-stat">
+              <span>Valeur écart</span>
+              <strong id="mamyAdminDiffValue">0 FCFA</strong>
+            </div>
+            <div class="mamy-stat">
+              <span>Alertes</span>
+              <strong id="mamyAdminAlerts">0</strong>
+            </div>
+          </div>
+          <div class="mamy-admin-tools">
+            <input id="mamyAdminSearch" type="search" placeholder="Produit, agent, zone, code-barres..." />
+            <button class="mamy-secondary" type="button" id="mamyRefreshAdmin">Actualiser</button>
+            <button class="mamy-primary" type="button" id="mamyAdminExport">Export global</button>
+          </div>
+          <div class="mamy-table-wrap">
+            <table class="mamy-table">
+              <thead>
+                <tr>
+                  <th>Produit</th>
+                  <th>Zone</th>
+                  <th>Stock</th>
+                  <th>Compté</th>
+                  <th>Ecart</th>
+                  <th>Equipe</th>
+                  <th>Agent</th>
+                </tr>
+              </thead>
+              <tbody id="mamyAdminRows"></tbody>
+            </table>
+          </div>
+        </div>
       </section>
     </main>
 
@@ -180,8 +391,10 @@
       <span class="cell-empty">Toucher pour renseigner</span>
     </template>
 
-    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script src="supabase-config.js?v=32"></script>
-    <script src="app.js?v=32"></script>
+    <script src="portal.js?v=33"></script>
+    <script src="supabase-config.js?v=33"></script>
+    <script src="app.js?v=33"></script>
+    <script src="mamy-app.js?v=33"></script>
+    <script async src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </body>
 </html>
