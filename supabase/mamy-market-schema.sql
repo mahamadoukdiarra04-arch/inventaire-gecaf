@@ -31,6 +31,19 @@ create index if not exists mamy_counts_product_idx
 create index if not exists mamy_counts_barcode_idx
   on public.mamy_inventory_counts(mission_id, barcode);
 
+create table if not exists public.mamy_inventory_teams (
+  mission_id text not null default 'mamy-market-2026',
+  team_key text not null,
+  team_name text not null,
+  active boolean not null default true,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  primary key (mission_id, team_key)
+);
+
+create index if not exists mamy_teams_mission_name_idx
+  on public.mamy_inventory_teams(mission_id, team_name);
+
 create or replace function public.upsert_mamy_counts_newer(p_counts jsonb)
 returns void
 language plpgsql
@@ -139,12 +152,28 @@ create policy "mamy anon counts"
   using (true)
   with check (true);
 
+alter table public.mamy_inventory_teams enable row level security;
+
+drop policy if exists "mamy anon teams" on public.mamy_inventory_teams;
+
+create policy "mamy anon teams"
+  on public.mamy_inventory_teams for all
+  to anon
+  using (true)
+  with check (true);
+
 alter table public.mamy_inventory_counts replica identity full;
+alter table public.mamy_inventory_teams replica identity full;
 
 do $$
 begin
   begin
     alter publication supabase_realtime add table public.mamy_inventory_counts;
+  exception
+    when duplicate_object then null;
+  end;
+  begin
+    alter publication supabase_realtime add table public.mamy_inventory_teams;
   exception
     when duplicate_object then null;
   end;

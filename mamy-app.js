@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "33";
+  const APP_VERSION = "34";
   const STORAGE_KEY = "mamy-market-inventory-v1";
   const MISSION_ID = "mamy-market-2026";
   const ADMIN_TEAM = "equipe_admin";
@@ -18,6 +18,7 @@
   let supabaseClient = null;
   let syncTimer = null;
   let syncInFlight = false;
+  let teamSyncRemoteAvailable = true;
   let scannerStream = null;
   let scannerTimer = null;
   let barcodeDetector = null;
@@ -27,6 +28,7 @@
   function init() {
     bindEvents();
     loadCatalog().then(() => {
+      preloadTeams().catch(() => {});
       render();
       startSyncTimer();
       syncNow().catch(() => {});
@@ -51,6 +53,8 @@
     $("#mamyAdminButton")?.addEventListener("click", openAdmin);
     $("#mamyRefreshAdmin")?.addEventListener("click", () => syncNow({ forcePull: true }).catch(() => {}));
     $("#mamyAdminSearch")?.addEventListener("input", renderAdmin);
+    $("#mamyTeamForm")?.addEventListener("submit", handleTeamSubmit);
+    $("#mamyTeamList")?.addEventListener("click", handleTeamListClick);
     document.querySelectorAll("[data-close-mamy-admin]").forEach((node) => node.addEventListener("click", closeAdmin));
     window.addEventListener("online", () => syncNow().catch(() => {}));
     window.addEventListener("portal:change", (event) => {
@@ -73,19 +77,23 @@
     catalogSummary = {};
   }
 
-  function handleLogin(event) {
+  async function handleLogin(event) {
     event.preventDefault();
     const data = Object.fromEntries(new FormData(event.currentTarget));
     const team = clean(data.team);
     const agent = clean(data.agent);
     if (!team || !agent) return alert("Renseignez l'equipe et l'agent.");
+    const isAdmin = isAdminCredentials(team, agent);
+    if (!isAdmin && !(await validateTeamAccess(team))) {
+      return alert("Cette equipe n'est pas encore creee ou active. Connectez-vous en admin pour l'ajouter.");
+    }
     state.session = {
       connected: true,
       team,
       teamKey: normalize(team),
       agent,
       agentKey: normalize(agent),
-      isAdmin: isAdminCredentials(team, agent),
+      isAdmin,
       connectedAt: new Date().toISOString(),
     };
     saveState();
@@ -98,6 +106,37 @@
     state.session = defaultState().session;
     saveState();
     render();
+  }
+
+  function handleTeamSubmit(event) {
+    event.preventDefault();
+    if (!isAdminSession()) return;
+    const data = Object.fromEntries(new FormData(event.currentTarget));
+    const teamName = clean(data.teamName);
+    if (!teamName) return;
+    if (normalize(teamName) === ADMIN_TEAM) return alert("Ce nom est reserve a l'administration.");
+    const team = upsertLocalTeam(teamName);
+    queueTeamSync(team);
+    event.currentTarget.reset();
+    saveState();
+    renderAdmin();
+    syncNow().catch(() => {});
+  }
+
+  function handleTeamListClick(event) {
+    if (!isAdminSession()) return;
+    const button = event.target.closest("[data-mamy-team-action]");
+    if (!button) return;
+    const teamKey = button.dataset.teamKey;
+    const nextActive = button.dataset.mamyTeamAction === "restore";
+    const team = state.teams.find((item) => item.teamKey === teamKey);
+    if (!team) return;
+    if (!nextActive && !window.confirm(`Desactiver ${team.teamName} ?`)) return;
+    const updated = setLocalTeamActive(teamKey, nextActive);
+    queueTeamSync(updated);
+    saveState();
+    renderAdmin();
+    syncNow().catch(() => {});
   }
 
   function handleSearchInput(event) {
@@ -222,7 +261,7 @@
   function queueCountSync(count) {
     state.syncQueue = state.syncQueue.filter((item) => item.id !== count.id);
     state.syncQueue.push({ ...count, queuedAt: new Date().toISOString(), attempts: 0 });
-    state.syncStatus.pending = state.syncQueue.length;
+    state.syncStatus.pending = getPendingSyncCount();
   }
 
   async function startScanner() {
@@ -282,15 +321,24 @@
     saveState();
     try {
       const client = getSupabaseClient();
+      await syncTeamsNow(client);
       const batch = state.syncQueue.slice(0, SYNC_BATCH_SIZE);
       if (batch.length) {
         await upsertRemoteCounts(client, batch);
         const ids = new Set(batch.map((item) => item.id));
         state.syncQueue = state.syncQueue.filter((item) => !ids.has(item.id));
       }
-      if (forcePull || !state.syncQueue.length) await pullRemoteCounts(client);
-      state.syncStatus.remote = "synced";
-      state.syncStatus.message = "Synchronise";
+      if (forcePull || !state.syncQueue.length) {
+        try {
+          await pullRemoteTeams(client);
+        } catch (error) {
+          if (!isMissingTeamRemoteObject(error)) throw error;
+          teamSyncRemoteAvailable = false;
+        }
+        await pullRemoteCounts(client);
+      }
+      state.syncStatus.remote = getPendingSyncCount() ? "pending" : "synced";
+      state.syncStatus.message = getPendingSyncCount() ? "Synchronisation en attente" : "Synchronise";
       state.syncStatus.lastSyncAt = new Date().toISOString();
     } catch (error) {
       state.syncStatus.remote = "error";
@@ -311,6 +359,26 @@
     if (result.error) throw result.error;
   }
 
+  async function syncTeamsNow(client) {
+    const batch = state.teamSyncQueue.slice(0, SYNC_BATCH_SIZE);
+    if (!batch.length || !teamSyncRemoteAvailable) return;
+    try {
+      await upsertRemoteTeams(client, batch);
+      const keys = new Set(batch.map((item) => item.teamKey));
+      state.teamSyncQueue = state.teamSyncQueue.filter((item) => !keys.has(item.teamKey));
+    } catch (error) {
+      if (!isMissingTeamRemoteObject(error)) throw error;
+      teamSyncRemoteAvailable = false;
+      state.syncStatus.message = "Table equipes MAMY en attente";
+    }
+  }
+
+  async function upsertRemoteTeams(client, teams) {
+    const payload = teams.map(toRemoteTeam);
+    const result = await client.from("mamy_inventory_teams").upsert(payload, { onConflict: "mission_id,team_key" });
+    if (result.error) throw result.error;
+  }
+
   async function pullRemoteCounts(client) {
     let query = client.from("mamy_inventory_counts").select("*").eq("mission_id", MISSION_ID).order("updated_at", { ascending: false }).limit(5000);
     if (!isAdminSession()) query = query.eq("team_key", state.session.teamKey);
@@ -328,6 +396,39 @@
       if (!local || String(remote.updatedAt || "") >= String(local.updatedAt || "")) map.set(remote.id, remote);
     });
     state.counts = Array.from(map.values()).sort(sortCounts);
+  }
+
+  async function preloadTeams() {
+    if (!navigator.onLine || !hasRemoteConfig() || !window.supabase?.createClient) return;
+    try {
+      await pullRemoteTeams(getSupabaseClient());
+      saveState();
+    } catch (error) {
+      if (!isMissingTeamRemoteObject(error)) throw error;
+      teamSyncRemoteAvailable = false;
+    }
+  }
+
+  async function pullRemoteTeams(client = getSupabaseClient()) {
+    if (!teamSyncRemoteAvailable) return;
+    const { data, error } = await client
+      .from("mamy_inventory_teams")
+      .select("*")
+      .eq("mission_id", MISSION_ID)
+      .order("team_name", { ascending: true });
+    if (error) throw error;
+    mergeRemoteTeams((data || []).map(fromRemoteTeam));
+  }
+
+  function mergeRemoteTeams(remoteTeams) {
+    const pendingKeys = new Set(state.teamSyncQueue.map((item) => item.teamKey));
+    const map = new Map(state.teams.map((team) => [team.teamKey, team]));
+    remoteTeams.forEach((remote) => {
+      if (!remote?.teamKey || pendingKeys.has(remote.teamKey)) return;
+      const local = map.get(remote.teamKey);
+      if (!local || String(remote.updatedAt || "") >= String(local.updatedAt || "")) map.set(remote.teamKey, remote);
+    });
+    state.teams = Array.from(map.values()).sort(sortTeams);
   }
 
   function render() {
@@ -367,9 +468,39 @@
     setText("#mamyAdminLines", formatQty(rows.length));
     setText("#mamyAdminDiffValue", formatMoney(diffValue));
     setText("#mamyAdminAlerts", formatQty(rows.filter((count) => Number(count.differenceQty || 0) !== 0 || !count.barcode).length));
+    setText("#mamyAdminTeams", formatQty(state.teams.filter((team) => team.active !== false).length));
+    renderTeamAdmin();
     const body = $("#mamyAdminRows");
     if (!body) return;
     body.innerHTML = rows.length ? rows.slice(0, 500).map(renderAdminRow).join("") : `<tr><td colspan="7">Aucune ligne.</td></tr>`;
+  }
+
+  function renderTeamAdmin() {
+    const list = $("#mamyTeamList");
+    if (!list) return;
+    const teams = state.teams.slice().sort(sortTeams);
+    const activeCount = teams.filter((team) => team.active !== false).length;
+    setText("#mamyTeamsMeta", `${activeCount} / ${teams.length}`);
+    list.innerHTML = teams.length
+      ? teams.map(renderTeamItem).join("")
+      : `<div class="mamy-team-empty">Aucune equipe creee.</div>`;
+  }
+
+  function renderTeamItem(team) {
+    const lines = state.counts.filter((count) => count.teamKey === team.teamKey).length;
+    const isInactive = team.active === false;
+    const action = isInactive ? "restore" : "disable";
+    const label = isInactive ? "Reactiver" : "Desactiver";
+    const buttonClass = isInactive ? "mamy-primary" : "mamy-secondary";
+    return `
+      <div class="mamy-team-item ${isInactive ? "is-muted" : ""}">
+        <div>
+          <strong>${escapeHtml(team.teamName)}</strong>
+          <span>${escapeHtml(isInactive ? "inactive" : "active")} - ${formatQty(lines)} ligne(s)</span>
+        </div>
+        <button class="${buttonClass}" type="button" data-mamy-team-action="${action}" data-team-key="${escapeHtml(team.teamKey)}">${label}</button>
+      </div>
+    `;
   }
 
   function renderCountRow(count) {
@@ -402,7 +533,7 @@
   function updateSyncBadge() {
     const badge = $("#mamySyncBadge");
     if (!badge) return;
-    const pending = state.syncQueue.length;
+    const pending = getPendingSyncCount();
     let text = "Local";
     if (!navigator.onLine) text = pending ? `Hors ligne (${pending})` : "Hors ligne";
     else if (pending) text = `A synchroniser (${pending})`;
@@ -568,11 +699,32 @@
     };
   }
 
+  function toRemoteTeam(team) {
+    return {
+      mission_id: MISSION_ID,
+      team_key: team.teamKey,
+      team_name: team.teamName,
+      active: team.active !== false,
+      updated_at: team.updatedAt || new Date().toISOString(),
+    };
+  }
+
+  function fromRemoteTeam(row) {
+    return normalizeTeamRecord({
+      teamName: row.team_name,
+      teamKey: row.team_key,
+      active: row.active !== false,
+      updatedAt: row.updated_at || "",
+    });
+  }
+
   function defaultState() {
     return {
       session: { connected: false, team: "", teamKey: "", agent: "", agentKey: "", isAdmin: false, connectedAt: "" },
       counts: [],
+      teams: [],
       syncQueue: [],
+      teamSyncQueue: [],
       lastZone: "Rayon",
       syncStatus: { remote: "local", pending: 0, message: "Mode local", lastSyncAt: "" },
     };
@@ -588,7 +740,9 @@
         ...parsed,
         session: { ...fallback.session, ...(parsed.session || {}), connected: false, isAdmin: false },
         counts: Array.isArray(parsed.counts) ? parsed.counts : [],
+        teams: normalizeTeams(parsed.teams),
         syncQueue: Array.isArray(parsed.syncQueue) ? parsed.syncQueue : [],
+        teamSyncQueue: normalizeTeams(parsed.teamSyncQueue),
         syncStatus: { ...fallback.syncStatus, ...(parsed.syncStatus || {}) },
       };
     } catch {
@@ -597,9 +751,88 @@
   }
 
   function saveState() {
-    state.syncStatus.pending = state.syncQueue.length;
+    state.syncStatus.pending = getPendingSyncCount();
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, session: { ...state.session, connected: false, isAdmin: false } }));
     updateSyncBadge();
+  }
+
+  function upsertLocalTeam(teamName) {
+    const name = clean(teamName) || "Equipe terrain";
+    const teamKey = normalize(name);
+    const now = new Date().toISOString();
+    const existing = state.teams.find((team) => team.teamKey === teamKey);
+    const team = { teamName: name, teamKey, active: true, updatedAt: now, createdAt: existing?.createdAt || now };
+    state.teams = [...state.teams.filter((item) => item.teamKey !== teamKey), team].sort(sortTeams);
+    return team;
+  }
+
+  function setLocalTeamActive(teamKey, isActive) {
+    let updated = null;
+    const now = new Date().toISOString();
+    state.teams = state.teams
+      .map((team) => {
+        if (team.teamKey !== teamKey) return team;
+        updated = { ...team, active: Boolean(isActive), updatedAt: now };
+        return updated;
+      })
+      .sort(sortTeams);
+    return updated;
+  }
+
+  function queueTeamSync(team) {
+    if (!team?.teamKey) return;
+    state.teamSyncQueue = state.teamSyncQueue.filter((item) => item.teamKey !== team.teamKey);
+    state.teamSyncQueue.push({ ...team, queuedAt: new Date().toISOString(), attempts: 0 });
+    state.syncStatus.pending = getPendingSyncCount();
+  }
+
+  async function validateTeamAccess(teamName) {
+    if (state.teams.length && isAllowedTeam(teamName)) return true;
+    if (!navigator.onLine || !hasRemoteConfig() || !window.supabase?.createClient) return !state.teams.length;
+    try {
+      await pullRemoteTeams(getSupabaseClient());
+      saveState();
+    } catch (error) {
+      if (!isMissingTeamRemoteObject(error)) throw error;
+      teamSyncRemoteAvailable = false;
+      return !state.teams.length;
+    }
+    return state.teams.length ? isAllowedTeam(teamName) : true;
+  }
+
+  function isAllowedTeam(teamName) {
+    const teamKey = normalize(teamName);
+    if (!teamKey) return false;
+    if (!state.teams.length) return true;
+    return state.teams.some((team) => team.teamKey === teamKey && team.active !== false);
+  }
+
+  function normalizeTeams(teams) {
+    if (!Array.isArray(teams)) return [];
+    const map = new Map();
+    teams.forEach((team) => {
+      const normalized = normalizeTeamRecord(team);
+      if (normalized) map.set(normalized.teamKey, normalized);
+    });
+    return Array.from(map.values()).sort(sortTeams);
+  }
+
+  function normalizeTeamRecord(team) {
+    const teamName = clean(team?.teamName || team?.team_name);
+    if (!teamName) return null;
+    const teamKey = clean(team?.teamKey || team?.team_key) || normalize(teamName);
+    if (!teamKey) return null;
+    return {
+      teamName,
+      teamKey,
+      active: team?.active !== false,
+      updatedAt: team?.updatedAt || team?.updated_at || "",
+      createdAt: team?.createdAt || team?.created_at || "",
+    };
+  }
+
+  function getPendingSyncCount() {
+    return (state.syncQueue?.length || 0) + (state.teamSyncQueue?.length || 0);
   }
 
   function isAdminCredentials(team, agent) {
@@ -614,9 +847,18 @@
     return String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""));
   }
 
+  function sortTeams(a, b) {
+    return String(a.teamName || "").localeCompare(String(b.teamName || ""));
+  }
+
   function isMissingRemoteObject(error) {
     const msg = String(error?.message || error?.details || "");
     return error?.code === "PGRST202" || error?.code === "42P01" || msg.includes("mamy_inventory_counts") || msg.includes("upsert_mamy_counts_newer");
+  }
+
+  function isMissingTeamRemoteObject(error) {
+    const msg = String(error?.message || error?.details || "");
+    return error?.code === "PGRST202" || error?.code === "42P01" || msg.includes("mamy_inventory_teams");
   }
 
   function getErrorMessage(error) {

@@ -1,14 +1,14 @@
-const CACHE_NAME = "gecaf-inv-v33";
+const CACHE_NAME = "gecaf-inv-v34";
 const PAGE_FALLBACK = "./";
 const ASSETS = [
   PAGE_FALLBACK,
-  "./styles-v33.css",
-  "./mamy-styles-v33.css",
-  "./app-v33.js",
-  "./portal-v33.js",
-  "./mamy-app-v33.js",
-  "./mamy-products-v33.json",
-  "./supabase-config-v33.js",
+  "./styles-v34.css",
+  "./mamy-styles-v34.css",
+  "./app-v34.js",
+  "./portal-v34.js",
+  "./mamy-app-v34.js",
+  "./mamy-products-v34.json",
+  "./supabase-config-v34.js",
   "./manifest.webmanifest",
 ];
 

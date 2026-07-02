@@ -4,16 +4,16 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#123142" />
-    <title>Inventaires terrain EKAM Capital</title>
+    <title>Inventaires terrain</title>
     <link rel="icon" href="data:," />
-    <link rel="manifest" href="manifest.webmanifest?v=33" />
-    <link rel="stylesheet" href="styles.css?v=33" />
-    <link rel="stylesheet" href="mamy-styles.css?v=33" />
+    <link rel="manifest" href="manifest.webmanifest?v=34" />
+    <link rel="stylesheet" href="styles.css?v=34" />
+    <link rel="stylesheet" href="mamy-styles.css?v=34" />
   </head>
   <body>
     <section class="portal-view" id="portalView" aria-label="Choix de l'inventaire">
       <div class="portal-brand">
-        <span>EKAM Capital</span>
+        <span>Inventaires terrain</span>
         <strong>Inventaires terrain</strong>
       </div>
       <div class="portal-grid">
@@ -248,6 +248,26 @@
               <span>Alertes</span>
               <strong id="mamyAdminAlerts">0</strong>
             </div>
+            <div class="mamy-stat">
+              <span>Equipes</span>
+              <strong id="mamyAdminTeams">0</strong>
+            </div>
+          </div>
+          <div class="mamy-team-admin">
+            <form id="mamyTeamForm" class="mamy-team-form">
+              <label>
+                Nouvelle equipe
+                <input name="teamName" placeholder="Equipe 1" autocomplete="off" required />
+              </label>
+              <button class="mamy-primary" type="submit">Creer equipe</button>
+            </form>
+            <div class="mamy-team-box">
+              <div class="mamy-team-heading">
+                <strong>Equipes autorisees</strong>
+                <span id="mamyTeamsMeta">0 equipe</span>
+              </div>
+              <div id="mamyTeamList" class="mamy-team-list"></div>
+            </div>
           </div>
           <div class="mamy-admin-tools">
             <input id="mamyAdminSearch" type="search" placeholder="Produit, agent, zone, code-barres..." />
@@ -391,10 +411,10 @@
       <span class="cell-empty">Toucher pour renseigner</span>
     </template>
 
-    <script src="portal.js?v=33"></script>
-    <script src="supabase-config.js?v=33"></script>
-    <script src="app.js?v=33"></script>
-    <script src="mamy-app.js?v=33"></script>
+    <script src="portal.js?v=34"></script>
+    <script src="supabase-config.js?v=34"></script>
+    <script src="app.js?v=34"></script>
+    <script src="mamy-app.js?v=34"></script>
     <script async src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   </body>
 </html>
