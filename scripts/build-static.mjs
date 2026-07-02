@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const root = process.cwd();
 const dist = join(root, "dist");
-const buildVersion = "34";
+const buildVersion = "35";
 const files = [
   "index.html",
   "styles.css",
@@ -31,6 +31,7 @@ for (const file of files) {
       .replace(/app\.js\?v=\d+/g, `app-v${buildVersion}.js`)
       .replace(/portal\.js\?v=\d+/g, `portal-v${buildVersion}.js`)
       .replace(/mamy-app\.js\?v=\d+/g, `mamy-app-v${buildVersion}.js`)
+      .replace(/zxing-browser\.min\.js\?v=\d+/g, `zxing-browser-v${buildVersion}.min.js`)
       .replace(/supabase-config\.js\?v=\d+/g, `supabase-config-v${buildVersion}.js`)
       .replace(/manifest\.webmanifest\?v=\d+/g, `manifest.webmanifest?v=${buildVersion}`);
   }
@@ -58,3 +59,6 @@ await writeFile(join(dist, `portal-v${buildVersion}.js`), await readFile(join(ro
 await writeFile(join(dist, `mamy-app-v${buildVersion}.js`), await readFile(join(root, "mamy-app.js")));
 await writeFile(join(dist, `mamy-styles-v${buildVersion}.css`), await readFile(join(root, "mamy-styles.css")));
 await writeFile(join(dist, `mamy-products-v${buildVersion}.json`), await readFile(join(root, "mamy-products.json")));
+const zxingBundle = await readFile(join(root, "node_modules", "@zxing", "browser", "umd", "zxing-browser.min.js"));
+await writeFile(join(dist, "zxing-browser.min.js"), zxingBundle);
+await writeFile(join(dist, `zxing-browser-v${buildVersion}.min.js`), zxingBundle);

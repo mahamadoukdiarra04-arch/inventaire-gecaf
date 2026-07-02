@@ -6,5 +6,8 @@
   "scripts": {
     "build": "node scripts/build-static.mjs",
     "deploy": "npm run build && npx wrangler pages deploy dist --project-name gecaf-inv"
+  },
+  "dependencies": {
+    "@zxing/browser": "^0.2.0"
   }
 }

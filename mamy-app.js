@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "34";
+  const APP_VERSION = "35";
   const STORAGE_KEY = "mamy-market-inventory-v1";
   const MISSION_ID = "mamy-market-2026";
   const ADMIN_TEAM = "equipe_admin";
@@ -22,6 +22,8 @@
   let scannerStream = null;
   let scannerTimer = null;
   let barcodeDetector = null;
+  let zxingReader = null;
+  let zxingControls = null;
 
   document.addEventListener("DOMContentLoaded", init);
 
@@ -269,19 +271,30 @@
       alert("Camera indisponible. Utilisez la recherche manuelle.");
       return;
     }
-    if (!("BarcodeDetector" in window)) {
-      alert("Le scan automatique n'est pas disponible sur ce navigateur. Saisissez le code-barres manuellement.");
-      return;
-    }
     try {
-      barcodeDetector = barcodeDetector || new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
-      scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
       const video = $("#mamyScannerVideo");
-      video.srcObject = scannerStream;
-      await video.play();
+      if (!video) return;
       $("#mamyScannerPanel").hidden = false;
-      scannerTimer = window.setInterval(detectBarcodeFrame, 450);
-    } catch {
+      if (typeof window.BarcodeDetector === "function") {
+        barcodeDetector = barcodeDetector || new BarcodeDetector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"] });
+        scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        video.srcObject = scannerStream;
+        await video.play();
+        scannerTimer = window.setInterval(detectBarcodeFrame, 450);
+        return;
+      }
+      if (window.ZXingBrowser?.BrowserMultiFormatOneDReader) {
+        zxingReader = zxingReader || new window.ZXingBrowser.BrowserMultiFormatOneDReader(undefined, { delayBetweenScanAttempts: 180, delayBetweenScanSuccess: 250 });
+        zxingControls = await zxingReader.decodeFromVideoDevice(undefined, video, (result) => {
+          const value = clean(result?.getText?.() || result?.text);
+          if (value) handleScannedCode(value);
+        });
+        return;
+      }
+      alert("Module de scan indisponible. Rechargez l'application en ligne, puis reessayez.");
+      stopScanner();
+    } catch (error) {
+      stopScanner();
       alert("Impossible d'ouvrir la camera.");
     }
   }
@@ -293,20 +306,28 @@
       const codes = await barcodeDetector.detect(video);
       const value = clean(codes?.[0]?.rawValue);
       if (!value) return;
-      $("#mamySearchInput").value = value;
-      const product = findExactBarcode(value);
-      if (product) {
-        selectProduct(product);
-        stopScanner();
-      } else {
-        renderSearchResults(value);
-      }
+      handleScannedCode(value);
     } catch {}
+  }
+
+  function handleScannedCode(value) {
+    const code = clean(value);
+    if (!code) return;
+    $("#mamySearchInput").value = code;
+    const product = findExactBarcode(code);
+    if (product) {
+      selectProduct(product);
+      stopScanner();
+      return;
+    }
+    renderSearchResults(code);
   }
 
   function stopScanner() {
     if (scannerTimer) window.clearInterval(scannerTimer);
     scannerTimer = null;
+    if (zxingControls?.stop) zxingControls.stop();
+    zxingControls = null;
     if (scannerStream) scannerStream.getTracks().forEach((track) => track.stop());
     scannerStream = null;
     const panel = $("#mamyScannerPanel");
