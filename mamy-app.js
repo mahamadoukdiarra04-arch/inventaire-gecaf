@@ -1,7 +1,7 @@
 (function () {
   "use strict";
 
-  const APP_VERSION = "35";
+  const APP_VERSION = "36";
   const STORAGE_KEY = "mamy-market-inventory-v1";
   const MISSION_ID = "mamy-market-2026";
   const ADMIN_TEAM = "equipe_admin";

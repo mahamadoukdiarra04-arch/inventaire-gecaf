@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 const root = process.cwd();
 const dist = join(root, "dist");
-const buildVersion = "35";
+const buildVersion = "36";
 const files = [
   "index.html",
   "styles.css",
